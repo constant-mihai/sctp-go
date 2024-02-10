@@ -1,0 +1,36 @@
+CC := gcc
+CFLAGS = -Wall \
+		 -Wextra \
+		 -fno-diagnostics-show-caret \
+		 -Wcast-align \
+		 -Werror=return-type \
+		 -g -O0 \
+		 -Ddebug -fPIC
+COVFLAGS = -fprofile-arcs \
+	       -ftest-coverage
+LDFLAGS = -lsctp -lpthread -lgcov -coverage #-Wl,-rpath=$(shell pwd)/log # this is needed if modules are imported by relative path
+SHELL:= /bin/bash
+
+ifeq ($(v),1)
+	VERBOSE =
+else
+	VERBOSE = @
+endif
+
+# address sanitization:
+# https://developers.redhat.com/blog/2021/05/05/memory-error-checking-in-c-and-c-comparing-sanitizers-and-valgrind
+# https://www.osc.edu/resources/getting_started/howto/howto_use_address_sanitizer
+# https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html
+ifeq ($(asan),1)
+	STATIC_ANALYSIS_FLAGS = -fsanitize=address \
+							-fsanitize=leak
+	LDFLAGS += -fsanitize=address \
+			   -fsanitize=leak \
+			   -static-libasan
+endif
+
+ifeq ($(race_check),1)
+	STATIC_ANALYSIS_FLAGS = -fsanitize=thread
+	LDFLAGS += -fsanitize=thread\
+			   -static-libasan
+endif
