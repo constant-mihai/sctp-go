@@ -4,14 +4,11 @@ CFLAGS = -Wall \
 		 -fno-diagnostics-show-caret \
 		 -Wcast-align \
 		 -Werror=return-type \
-		 -g -O0 \
-		 -Ddebug -fPIC
-COVFLAGS = -fprofile-arcs \
-	       -ftest-coverage
-LDFLAGS = -lsctp -lpthread -lgcov -coverage #-Wl,-rpath=$(shell pwd)/log # this is needed if modules are imported by relative path
+		 -fPIC
+LDFLAGS = -lsctp -lpthread
 SHELL:= /bin/bash
 
-ifeq ($(v),1)
+ifdef VERBOSITY
 	VERBOSE =
 else
 	VERBOSE = @
@@ -21,16 +18,26 @@ endif
 # https://developers.redhat.com/blog/2021/05/05/memory-error-checking-in-c-and-c-comparing-sanitizers-and-valgrind
 # https://www.osc.edu/resources/getting_started/howto/howto_use_address_sanitizer
 # https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html
-ifeq ($(asan),1)
-	STATIC_ANALYSIS_FLAGS = -fsanitize=address \
-							-fsanitize=leak
-	LDFLAGS += -fsanitize=address \
-			   -fsanitize=leak \
-			   -static-libasan
+ifdef DEBUG
+	CFLAGS += -g -O0 -Ddebug \
+			  -fprofile-arcs -ftest-coverage
+	LDFLAGS += -lgcov -coverage
 endif
 
-ifeq ($(race_check),1)
-	STATIC_ANALYSIS_FLAGS = -fsanitize=thread
-	LDFLAGS += -fsanitize=thread\
-			   -static-libasan
+#main.c:46 terminating
+#==2733468==LeakSanitizer has encountered a fatal error.
+#==2733468==HINT: For debugging, try setting environment variable LSAN_OPTIONS=verbosity=1:log_threads=1
+#==2733468==HINT: LeakSanitizer does not work under ptrace (strace, gdb, etc)
+ifdef MEMORY_CHECK
+	CFLAGS += -fprofile-arcs -ftest-coverage \
+			  -fsanitize=address -fsanitize=leak
+	LDFLAGS += -fsanitize=address -fsanitize=leak -static-libasan
+endif
+
+# cc1: error: ‘-fsanitize=thread’ is incompatible with ‘-fsanitize=address’
+# cc1: error: ‘-fsanitize=leak’ is incompatible with ‘-fsanitize=thread’
+ifdef RACE_CHECK 
+	CFLAGS += -g -O0 -Ddebug \
+		      -fsanitize=thread
+	LDFLAGS += -fsanitize=thread -static-libasan
 endif

@@ -1,16 +1,23 @@
 include ../Makefile.in
 
-INCLUDES = -I. -I/usr/local/include/
-SOURCE := $(wildcard ../src/*.c)
-OBJECTS := $(SOURCE:.c=.o)
+INCLUDES := -I.. -I. -I/usr/local/include/
+SOURCES := $(wildcard ../src/*.c)
+HEADERS := $(wildcard ../src/*.h)
+OBJECTS := $(SOURCES:.c=.o)
 TEST_SOURCE := $(wildcard *.c)
+TEST_HEADERS := $(wildcard *.h)
 TEST_OBJECTS := $(TEST_SOURCE:.c=.o)
 
-%.o: %.c %.h
-	$(CC) $(CFLAGS) $(INCLUDES) $(LDFLAGS) -c $< -o $@
+-include $(TEST_SOURCE.c=.d) $(SOURCES.c=.d)
 
-tests: $(OBJECTS) $(TEST_OBJECTS)
-	$(CC) $(CFLAGS) $($LDFLAGS) $^ -o $@
+%.o: %.c
+	@echo "$< -> $@"
+	$(VERBOSE)$(CC) $(CFLAGS) $(INCLUDES) $(LDFLAGS) -MMD -c $< -o $@
+
+.PHONY: tests
+tests: $(TEST_OBJECTS) $(OBJECTS)
+	@echo "Linking $^ -> $@"
+	$(VERBOSE)$(CC) $(CFLAGS) $(INCLUDES) $($LDFLAGS) $^ -o $@
 
 clean:
 	rm -rf *.o *.d

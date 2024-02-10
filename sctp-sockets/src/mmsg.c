@@ -106,17 +106,17 @@ void mmsg_message_dump(mmsg_t *mmsg, int nmsg) {
     if (n > 0) LOG("%s", buf);
 }
 
-void mmsg_send(mmsg_t *mmsg, int nmsg, int sockfd) {
+int mmsg_send(mmsg_t *mmsg, int nmsg, int sockfd) {
     int nsent = 0;
     do {
-        nsent += sendmmsg(sockfd, mmsg->vec, nmsg, MSG_DONTWAIT | MSG_NOSIGNAL);
-        if (nsent == -1 && (errno != EAGAIN || errno != EWOULDBLOCK)) {
+        int ret = sendmmsg(sockfd, mmsg->vec, nmsg, MSG_DONTWAIT | MSG_NOSIGNAL);
+        if (ret == -1 && (errno != EAGAIN || errno != EWOULDBLOCK)) {
             LOG("error on sendmmsg(): %s", strerror(errno));
-            return;
+            return ret;
         }
+        nsent += ret;
     } while (nsent < nmsg);
-
-    LOG("%d messages sent\n", nsent);
+    return nsent;
 }
 
 int mmsg_recv(mmsg_t *mmsg, int sockfd) {
@@ -124,6 +124,7 @@ int mmsg_recv(mmsg_t *mmsg, int sockfd) {
 
     nread = recvmmsg(sockfd, mmsg->vec, mmsg->vec_len, MSG_DONTWAIT, NULL);
     if (nread == -1 && (errno != EAGAIN || errno != EWOULDBLOCK)) {
+        // TODO: this can potentially flood the log.
         LOG("error on recvmmsg(): %s", strerror(errno));
         //exit(EXIT_FAILURE);
     }

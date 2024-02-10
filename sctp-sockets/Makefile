@@ -1,3 +1,5 @@
+include Makefile.in
+
 SUBDIRS := src tests
 
 .PHONY: all $(SUBDIRS)
@@ -5,7 +7,8 @@ SUBDIRS := src tests
 all: $(SUBDIRS)
 
 $(SUBDIRS):
-	$(MAKE) -C $@
+	$(VERBOSE)$(MAKE) -C $@
+	$(VERBOSE)$(MAKE) -C tests tests
 
 clean:
 	$(VERBOSE)for dir in $(SUBDIRS); do \

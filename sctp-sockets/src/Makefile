@@ -1,11 +1,14 @@
 include ../Makefile.in
 
-INCLUDES = -I. -I/usr/local/include/
-SOURCE := $(wildcard *.c)
-OBJECTS := $(SOURCE:.c=.o)
+INCLUDES := -I. -I/usr/local/include/
+SOURCES := $(wildcard *.c)
+HEADERS := $(wildcard *.h)
+OBJECTS := $(SOURCES:.c=.o)
+
+-include $(SOURCES.c=.d)
 
 %.o: %.c %.h
-	$(CC) $(CFLAGS) $(INCLUDES) $(LDFLAGS) -c $< -o $@
+	$(VERBOSE)$(CC) $(CFLAGS) $(INCLUDES) $(LDFLAGS) -MMD -c $< -o $@
 
 all: $(OBJECTS)
 

@@ -5,10 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define LOG(fmt, ...) sigtran_log(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
+#define LOG(fmt, ...) sctp_log(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
 
 static void
-sigtran_log(const char* file, int line, const char *fmt, ...)
+sctp_log(const char* file, int line, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
