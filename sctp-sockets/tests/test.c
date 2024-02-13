@@ -39,8 +39,14 @@ int test_run_suite(test_suite_t *suite) {
     for (uint16_t i = 0; i < suite->count; i++) {
         // TODO test init
         test_case_t *test = suite->test+i; 
+        assert(test->name != NULL && "test name cannot be null");
         LOG("Running: %s", test->name);
-        assert(test->run() == 0 && test->name);
+        assert(test != NULL && "test is null");
+        assert(test->run != NULL && "test function is null");
+        if (test->run()) {
+            LOG("Test [%s] failed", test->name);
+            return 1;
+        }
         // TODO test teardown 
     }
     // TODO: suite teardown 

@@ -1,31 +1,26 @@
 #include <src/log.h>
-#include <src/sctp.h>
 #include <src/mmsg.h>
-
 #include <src/thread.h>
+
+#include <sctp_test.h>
 
 extern int IS_PROGRAM_RUNNING;
 int CLIENT_IS_DONE;
 
 typedef struct {
-    const char *host;
-    uint16_t port;
-    sctp_options_container_t socket_options_container;
-
     int messages_sent;
     int messages_received;
 
     int bytes_sent;
     int bytes_received;
-
-    int retval;
-} sctp_thread_args_t;
+} accounting_t;
 
 void *_server_thread(void *arg)
 {
     int sockfd;
 
     sctp_thread_args_t *server_args = (sctp_thread_args_t*)arg;
+    accounting_t *accounting = (accounting_t*)server_args->extra;
     sockfd = sctp_socket(server_args->host,
                          server_args->port,
                          server_args->socket_options_container);
@@ -47,7 +42,7 @@ void *_server_thread(void *arg)
     while(IS_PROGRAM_RUNNING && !CLIENT_IS_DONE) {
         int nmsg = mmsg_recv(mmsg, sockfd);
         mmsg_message_dump(mmsg, nmsg);
-        server_args->messages_received += nmsg;
+        accounting->messages_received += nmsg;
     }
 
     mmsg_destroy(&mmsg);
@@ -80,6 +75,7 @@ void *_client_thread(void *arg)
     int sockfd;
 
     sctp_thread_args_t *client_args = (sctp_thread_args_t*)arg;
+    accounting_t *accounting = (accounting_t*)client_args->extra;
     sockfd = sctp_socket(client_args->host,
                          client_args->port,
                          client_args->socket_options_container);
@@ -100,10 +96,10 @@ void *_client_thread(void *arg)
     // TODO: add timeout; if the client has problems sending,
     // this will loop infinitely.
     int nmsg = _init_test_message(mmsg, &saddr, saddr_len);
-    while(IS_PROGRAM_RUNNING && client_args->messages_sent < 100) {
+    while(IS_PROGRAM_RUNNING && accounting->messages_sent < 100) {
         LOG("Sending %d messages", nmsg);
         //mmsg_message_dump(mmsg, nmsg);
-        client_args->messages_sent += mmsg_send(mmsg, nmsg, sockfd);
+        accounting->messages_sent += mmsg_send(mmsg, nmsg, sockfd);
         usleep(0.5);
     }
     CLIENT_IS_DONE = 1;
@@ -115,22 +111,29 @@ void *_client_thread(void *arg)
 }
 
 int sctp_test_send() {
-
     int toggle_off = 0;
     CLIENT_IS_DONE = 0;
 
     sctp_option_t socket_options[] = {
         { .fn = sctp_option_set_interleave, .args = &toggle_off },
         { .fn = sctp_option_set_partial_delivery_point, .args = &toggle_off },
-        //{ .fn = sctp_option_subscribe_to_events, .args = &events},
     };
     sctp_options_container_t socket_options_container = {
         .options = socket_options,
         .len = sizeof(socket_options)/sizeof(socket_options[0]),
     };
+    accounting_t sctp_server_args_accounting = {
+        .messages_sent = 0,
+        .messages_received = 0,
+        .bytes_sent = 0,
+        .bytes_received = 0,
+    };
     sctp_thread_args_t sctp_server_args = {
         .host = "0.0.0.0", .port = 12345,
         .socket_options_container = socket_options_container,
+        .extra = (void*)&sctp_server_args_accounting,
+    };
+    accounting_t sctp_client_args_accounting = {
         .messages_sent = 0,
         .messages_received = 0,
         .bytes_sent = 0,
@@ -139,10 +142,7 @@ int sctp_test_send() {
     sctp_thread_args_t sctp_client_args = {
         .host = "0.0.0.0", .port = 54321,
         .socket_options_container = socket_options_container,
-        .messages_sent = 0,
-        .messages_received = 0,
-        .bytes_sent = 0,
-        .bytes_received = 0,
+        .extra = (void*)&sctp_client_args_accounting,
     };
     thread_declaration_t threads[2] = {
         {
@@ -154,75 +154,23 @@ int sctp_test_send() {
             .args = &sctp_client_args,
         },
     };
-    
+
     for (size_t i=0; i<sizeof(threads)/sizeof(threads[0]); i++) {
         start_thread(&threads[i]);
         // Wait for the server to start.
         // Otherwise I need to complicate the code with thread barriers.
         sleep(1);
     }
-    
+
     for (size_t i=0; i<sizeof(threads)/sizeof(threads[0]); i++) {
         join_thread(threads[i].id);
     }
 
-    if (sctp_client_args.messages_sent == sctp_server_args.messages_received) {
+    if (sctp_client_args_accounting.messages_sent == sctp_server_args_accounting.messages_received) {
         LOG("Client sent %d messages, server received: %d",
-            sctp_client_args.messages_sent, 
-            sctp_client_args.messages_received);
+            sctp_client_args_accounting.messages_sent, 
+            sctp_client_args_accounting.messages_received);
         return -1;
-    }
-
-    return 0;
-}
-
-// TODO: refactor this test with it's own handler functions.
-int sctp_test_events() {
-    struct sctp_event_subscribe events;
-    memset(&events, 0, sizeof(struct sctp_event_subscribe));
-    events.sctp_data_io_event = 1;
-    events.sctp_association_event = 1;
-    events.sctp_address_event = 1;
-    events.sctp_send_failure_event = 1;
-    events.sctp_peer_error_event = 1;
-    events.sctp_shutdown_event = 1;
-
-    int toggle_off = 0;
-    sctp_option_t socket_options[] = {
-        { .fn = sctp_option_set_interleave, .args = &toggle_off },
-        { .fn = sctp_option_set_partial_delivery_point, .args = &toggle_off },
-        { .fn = sctp_option_subscribe_to_events, .args = &events},
-    };
-    sctp_options_container_t socket_options_container = {
-        .options = socket_options,
-        .len = sizeof(socket_options)/sizeof(socket_options[0]),
-    };
-    sctp_thread_args_t sctp_server_args = {
-        .host = "0.0.0.0", .port = 12346,
-        .socket_options_container = socket_options_container,
-    };
-    sctp_thread_args_t sctp_client_args = {
-        .host = "0.0.0.0", .port = 64321,
-        .socket_options_container = socket_options_container,
-    };
-    thread_declaration_t threads[2] = {
-        {
-            .handler = _server_thread,
-            .args = &sctp_server_args,
-        },
-        {
-            .handler = _client_thread,
-            .args = &sctp_client_args,
-        },
-    };
-    
-    for (size_t i=0; i<sizeof(threads)/sizeof(threads[0]); i++) {
-        start_thread(&threads[i]);
-        usleep(0.5);
-    }
-    
-    for (size_t i=0; i<sizeof(threads)/sizeof(threads[0]); i++) {
-        join_thread(threads[i].id);
     }
 
     return 0;

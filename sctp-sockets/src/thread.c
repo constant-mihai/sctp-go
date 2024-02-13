@@ -1,10 +1,12 @@
 #include <pthread.h>
+#include <assert.h>
 
 #include <log.h>
 #include <thread.h>
 
 void start_thread(thread_declaration_t *thread) {
     int status;
+    assert(thread && thread->handler && "thread initialization failed");
     status = pthread_create(&thread->id,
                             NULL,
                             thread->handler,

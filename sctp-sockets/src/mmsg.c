@@ -4,6 +4,7 @@
 #define __USE_GNU
 #include <errno.h>
 #include <netinet/ip.h>
+#include <netinet/sctp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -92,9 +93,14 @@ void mmsg_message_dump(mmsg_t *mmsg, int nmsg) {
     int n = 0;
     for (int i = 0; i < nmsg; i++) {
         struct msghdr hdr = mmsg->vec[i].msg_hdr;
+        n += sprintf(buf+n, "iovec[%d]:\n", i);
+
+        if (hdr.msg_flags & MSG_NOTIFICATION) {
+            const union sctp_notification *notification = hdr.msg_iov->iov_base;
+            n += sprintf(buf+n, "notification, type: %d\n", notification->sn_header.sn_type);
+        }
         int hdr_len = mmsg->vec[i].msg_len;
         if (hdr_len == 0) continue;
-        n += sprintf(buf+n, "iovec[%d]:\n", i);
         for (size_t vec_len = 0; vec_len < hdr.msg_iovlen; vec_len++) {
             n += mmsg_buf_hex_dump(hdr.msg_iov->iov_base,
                                    hdr_len,
@@ -111,6 +117,7 @@ int mmsg_send(mmsg_t *mmsg, int nmsg, int sockfd) {
     do {
         int ret = sendmmsg(sockfd, mmsg->vec, nmsg, MSG_DONTWAIT | MSG_NOSIGNAL);
         if (ret == -1 && (errno != EAGAIN || errno != EWOULDBLOCK)) {
+            // TODO: this can potentially flood the log.
             LOG("error on sendmmsg(): %s", strerror(errno));
             return ret;
         }
