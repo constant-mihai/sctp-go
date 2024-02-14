@@ -3,4 +3,6 @@
 *.gcno
 *.gcda
 *.gcov
+tags
+tags-system
 sctp-sockets/tests/tests
