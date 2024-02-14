@@ -26,12 +26,13 @@ monitor_t *monitor_create(int timeout) {
 }
 
 // fd is the file descriptor that we want to monitor for.
-int monitor_add(monitor_t *monitor, int fd, void *ptr) {
+int monitor_add(monitor_t *monitor, monitor_action_t *action) {
     struct epoll_event ev;
+    // TODO: store fds in monitor->fds
+    // TODO: realloc fds if not enough room
     ev.events = EPOLLIN|EPOLLEXCLUSIVE;
-    ev.data.fd = fd;
-    ev.data.ptr = ptr;
-    if (epoll_ctl(monitor->epoll_fd, EPOLL_CTL_ADD, fd, &ev)) {
+    ev.data.ptr = action;
+    if (epoll_ctl(monitor->epoll_fd, EPOLL_CTL_ADD, action->fd, &ev)) {
         return errno;
     }
 
@@ -39,6 +40,7 @@ int monitor_add(monitor_t *monitor, int fd, void *ptr) {
 }
 
 int monitor_del(monitor_t *monitor, int fd) {
+    // TODO: free fds from monitor->fds;
     if (epoll_ctl(monitor->epoll_fd, EPOLL_CTL_DEL, fd, NULL)) {
         return errno;
     }
@@ -78,7 +80,7 @@ void *monitor_run(void *args) {
             }
 
             if (events[i].events & EPOLLIN) {
-                action->cb(action->args);
+                action->cb(action->fd, action->args);
             }
         }
     }
