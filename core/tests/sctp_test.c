@@ -41,8 +41,12 @@ void *_server_thread(void *arg)
     // TODO: test bi-directional traffic
     while(IS_PROGRAM_RUNNING && !CLIENT_IS_DONE) {
         int nmsg = mmsg_recv(mmsg, sockfd);
-        mmsg_message_dump(mmsg, nmsg);
-        accounting->messages_received += nmsg;
+        if (nmsg < 0 && (errno != EAGAIN || errno != EWOULDBLOCK)) {
+            LOG("error receiving message: %s", strerror(errno));
+        } else {
+            mmsg_message_dump(mmsg, nmsg);
+            accounting->messages_received += nmsg;
+        }
     }
 
     mmsg_destroy(&mmsg);
@@ -62,7 +66,7 @@ int _init_test_message(mmsg_t *mmsg, struct sockaddr *saddr, int saddr_len) {
         msg_hdr->msg_name = (void*)saddr;
         msg_hdr->msg_namelen = saddr_len;
 
-        /* initialize specific SCTP control message header */
+        // TODO: sctp header?
         //msg_hdr->msg_controllen=CMSG_LEN(sizeof(struct sctp_sndrcvinfo));
         //cmsg=CMSG_FIRSTHDR(msg_hdr);
         //sinfo=(struct sctp_sndrcvinfo*)CMSG_DATA(cmsg);
@@ -96,11 +100,17 @@ void *_client_thread(void *arg)
     // TODO: add timeout; if the client has problems sending,
     // this will loop infinitely.
     int nmsg = _init_test_message(mmsg, &saddr, saddr_len);
-    while(IS_PROGRAM_RUNNING && accounting->messages_sent < 100) {
+    while (IS_PROGRAM_RUNNING && accounting->messages_sent < 100) {
         LOG("Sending %d messages", nmsg);
         //mmsg_message_dump(mmsg, nmsg);
-        accounting->messages_sent += mmsg_send(mmsg, nmsg, sockfd);
-        usleep(0.5);
+        //accounting->messages_sent += mmsg_send(mmsg, nmsg, sockfd);
+        int ret = mmsg_send(mmsg, nmsg, sockfd);
+        if (ret < 0 && (errno != EAGAIN || errno != EWOULDBLOCK)) {
+            LOG("error sending message: %s", strerror(errno));
+        } else {
+            accounting->messages_sent += ret;
+            usleep(0.5);
+        }
     }
     CLIENT_IS_DONE = 1;
     LOG("Client is done");

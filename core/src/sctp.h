@@ -28,9 +28,11 @@ typedef struct {
 
 int sctp_get_saddr(int af, const char* ip, uint16_t port,
                    struct sockaddr *saddr /*out*/, int *saddr_len /*out*/);
-
+int sctp_get_ip_str(const struct sockaddr *saddr,
+                    char *buf /* out */,
+                    int buf_len,
+                    uint16_t *port /* out */);
 int sctp_listen(int sockfd);
-
 int sctp_socket(const char *ip, uint16_t port, sctp_options_container_t options_container);
 
 // options

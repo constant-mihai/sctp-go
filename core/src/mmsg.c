@@ -2,6 +2,7 @@
 #include "mmsg.h"
 
 #define __USE_GNU
+#include <assert.h>
 #include <errno.h>
 #include <netinet/ip.h>
 #include <netinet/sctp.h>
@@ -88,7 +89,9 @@ int mmsg_buf_hex_dump(const char* in, size_t len, size_t offset, char *out) {
     return n;
 }
 
+// TODO: consider creating a dump_into_buf.
 void mmsg_message_dump(mmsg_t *mmsg, int nmsg) {
+    assert(mmsg != NULL && "container is null");
     char buf[6553];
     int n = 0;
     for (int i = 0; i < nmsg; i++) {
@@ -112,29 +115,50 @@ void mmsg_message_dump(mmsg_t *mmsg, int nmsg) {
     if (n > 0) LOG("%s", buf);
 }
 
+// mmsg_send is a non-blocking operation and uses the mmsg_t container to send messages.
+// Lifespan of the container is managed outside of this function.
 int mmsg_send(mmsg_t *mmsg, int nmsg, int sockfd) {
-    int nsent = 0;
-    do {
-        int ret = sendmmsg(sockfd, mmsg->vec, nmsg, MSG_DONTWAIT | MSG_NOSIGNAL);
-        if (ret == -1 && (errno != EAGAIN || errno != EWOULDBLOCK)) {
-            // TODO: this can potentially flood the log.
-            LOG("error on sendmmsg(): %s", strerror(errno));
-            return ret;
-        }
-        nsent += ret;
-    } while (nsent < nmsg);
-    return nsent;
+    assert(mmsg != NULL && "container is null");
+    // AFAIU, sendmmsg working in non-blocking mode doesn't
+    // depend on socket options, but rather on MSG_DONTWAIT.
+    // This means that EAGAIN and EWOULDBLOCK can be handled here.
+    // via a retry loop.
+    // However, such an encapsulated retry loop cannot be terminated by the caller.
+    return sendmmsg(sockfd, mmsg->vec, nmsg, MSG_DONTWAIT | MSG_NOSIGNAL);
 }
 
+// mmsg_recv is a non-blocking operation and uses the mmsg_t container.
+// Errors have to be handled outside.
+// This includes EAGAIN and EWOULDBLOCK.
 int mmsg_recv(mmsg_t *mmsg, int sockfd) {
-    int nread;
+    assert(mmsg != NULL && "container is null");
+    // AFAIU, recvmmsg working in non-blocking mode doesn't
+    // depend on socket options, but rather on MSG_DONTWAIT.
+    return recvmmsg(sockfd, mmsg->vec, mmsg->vec_len, MSG_DONTWAIT, NULL);
+}
 
-    nread = recvmmsg(sockfd, mmsg->vec, mmsg->vec_len, MSG_DONTWAIT, NULL);
-    if (nread == -1 && (errno != EAGAIN || errno != EWOULDBLOCK)) {
-        // TODO: this can potentially flood the log.
-        LOG("error on recvmmsg(): %s", strerror(errno));
-        //exit(EXIT_FAILURE);
+mmsg_iterator_t mmsg_get_iterator(const mmsg_t *mmsg) {
+    assert(mmsg != NULL && "container is null");
+    mmsg_iterator_t iterator = {
+        .mmsg = mmsg,
+        .index = -1,
+    };
+    return iterator;
+}
+
+mmsg_bytes_t mmsg_iterator_next(mmsg_iterator_t* iterator) {
+    assert(iterator != NULL && "iterator is null");
+    mmsg_bytes_t bytes = {
+        .buf = NULL,
+        .len = 0,
+    };
+    if (iterator->index == iterator->mmsg->vec_len - 1) {
+        iterator->index = -1;
+        return bytes;
     }
 
-    return nread;
+    iterator->index++;
+    bytes.buf = iterator->mmsg->vec[iterator->index].msg_hdr.msg_iov->iov_base;
+    bytes.len = iterator->mmsg->vec[iterator->index].msg_len;
+    return bytes;
 }

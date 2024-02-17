@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <arpa/inet.h>
 #include <netinet/sctp.h>
 
@@ -8,6 +9,7 @@ int
 sctp_get_saddr(int af, const char* ip, uint16_t port,
                struct sockaddr *saddr /*out*/, int *saddr_len /*out*/)
 {
+    assert(ip != NULL && saddr != NULL && saddr_len != NULL);
     switch(af) {
         case AF_INET:
             struct sockaddr_in *saddr_in = (struct sockaddr_in*) saddr;
@@ -24,6 +26,32 @@ sctp_get_saddr(int af, const char* ip, uint16_t port,
             return -1;
             break;
         default:
+            return -1;
+            break;
+    }
+
+    return 0;
+}
+
+int
+sctp_get_ip_str(const struct sockaddr *saddr, char *buf /* out */, int buf_len, uint16_t *port /* out */)
+{
+    assert(saddr != NULL && buf != NULL && port != NULL);
+    switch(saddr->sa_family) {
+        case AF_INET:
+            const struct sockaddr_in *saddr_in = (const struct sockaddr_in*) saddr;
+            if (inet_ntop(AF_INET, &saddr_in->sin_addr, buf, buf_len) == NULL) {
+                LOG("Cannot convert IP to text");
+                return -1;
+            }
+            *port = ntohs(saddr_in->sin_port);
+            break;
+        case AF_INET6:
+            LOG("IPv6 not implemented");
+            return -1;
+            break;
+        default:
+            LOG("Unkown family");
             return -1;
             break;
     }
