@@ -20,8 +20,8 @@ import (
 // TODO: for some reason src addr is always empty:
 // received buf: go test, len: 7 from: <nil>:0
 func TestSocketsSingleMessage(t *testing.T) {
-	server := NewServer("0.0.0.0", 12345)
-	client := NewClient("127.0.0.1", 54321)
+	server := NewSctpServer("0.0.0.0", 12345)
+	client := NewSctpClient("127.0.0.1", 54321)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -55,8 +55,8 @@ func TestSocketsSingleMessage(t *testing.T) {
 }
 
 func TestSocketsMultiMessage(t *testing.T) {
-	server := NewServer("0.0.0.0", 12346)
-	client := NewClient("127.0.0.1", 64321)
+	server := NewSctpServer("0.0.0.0", 12346)
+	client := NewSctpClient("127.0.0.1", 64321)
 
 	mmsg := CreateMultiMsg(10, 9216)
 	defer DestroyMultiMsg(&mmsg)

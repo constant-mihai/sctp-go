@@ -4,7 +4,7 @@
 #include <src/log.h>
 #include <sctp_test.h>
 #include <sctp_events_test.h>
-#include <monitor_test.h>
+#include <poller_test.h>
 #include <test.h>
 
 int IS_PROGRAM_RUNNING;
@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
     LOG("Registering tests...");
     test_register(suite, _create_test(sctp_test_send, "sctp test send"));
     test_register(suite, _create_test(sctp_events_test, "sctp test events"));
-    test_register(suite, _create_test(monitor_test, "monitor test"));
+    test_register(suite, _create_test(poller_test, "poller test"));
     test_run_suite(suite);
 
     test_destroy_suite(&suite);

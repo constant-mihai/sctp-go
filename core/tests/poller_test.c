@@ -1,23 +1,23 @@
 #include <sys/timerfd.h>
 
-#include <src/monitor.h>
+#include <src/poller.h>
 #include <src/thread.h>
 #include <src/log.h>
 
-#include "monitor_test.h"
+#include "poller_test.h"
 
-void _monitor_stop(int fd, void *args) {
-    monitor_t *monitor = args;
+void _poller_stop(int fd, void *args) {
+    poller_t *poller = args;
     LOG("received event for fd: %d", fd);
-    LOG("stopping monior with epoll_fd: %d", monitor->epoll_fd);
-    monitor_stop(monitor);
+    LOG("stopping monior with epoll_fd: %d", poller->epoll_fd);
+    poller_stop(poller);
 }
 
-int monitor_test() {
-    monitor_t *monitor = monitor_create(100 /*timeout in ms*/);
+int poller_test() {
+    poller_t *poller = poller_create(100 /*timeout in ms*/);
     thread_declaration_t thread = {
-        .handler = monitor_run,
-        .args = monitor,
+        .handler = poller_run,
+        .args = poller,
     };
 
     start_thread(&thread);
@@ -39,20 +39,20 @@ int monitor_test() {
         return -1;
     }
 
-    monitor_action_t action = {
+    poller_action_t action = {
         .fd = timer_fd,
-        .cb = _monitor_stop,
-        .args = monitor,
+        .cb = _poller_stop,
+        .args = poller,
     };
 
-    int err = monitor_add(monitor, &action);
+    int err = poller_add(poller, &action);
     if (err) {
         LOG("error: %s", strerror(err));
         return -1;
     }
 
     join_thread(thread.id);
-    monitor_destroy(&monitor);
+    poller_destroy(&poller);
 
     return 0;
 }

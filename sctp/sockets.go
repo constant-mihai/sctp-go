@@ -29,14 +29,14 @@ type Socket struct {
 	FD int
 }
 
-func NewServer(host string, port int) *Socket {
+func NewSctpServer(host string, port int) *Socket {
 	socket := Socket{}
 	fd := C.DefaultSctpServer(C.CString(host), C.uint16_t(port))
 	socket.FD = int(fd)
 	return &socket
 }
 
-func NewClient(host string, port int) *Socket {
+func NewSctpClient(host string, port int) *Socket {
 	socket := Socket{}
 	fd := C.DefaultSctpClient(C.CString(host), C.uint16_t(port))
 	socket.FD = int(fd)

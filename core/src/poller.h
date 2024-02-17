@@ -9,25 +9,25 @@ typedef struct {
 
     int is_running;
     int retval;
-} monitor_t;
+} poller_t;
 
-typedef void (monitor_action_f)(int fd, void *args);
+typedef void (poller_action_f)(int fd, void *args);
 
 typedef struct {
     // fd is the fd registerd with epoll_ctl. 
     int fd;
     // cb and args are opaque data which encapsulates callbacks
-    // that the user of the monitor wants to call when
+    // that the user of the poller wants to call when
     // the event triggers. For example, if the FD belongs
     // to an SCTP socket and the event is EPOLLIN,
     // then the user will probably want to read from the socket fd. 
-    monitor_action_f *cb;
+    poller_action_f *cb;
     void *args;
-} monitor_action_t;
+} poller_action_t;
 
-monitor_t *monitor_create(int timeout);
-int monitor_add(monitor_t *monitor, monitor_action_t *action);
-int monitor_del(monitor_t *monitor, int fd);
-void *monitor_run(void *args);
-void monitor_stop(monitor_t *monitor);
-void monitor_destroy(monitor_t **monitor);
+poller_t *poller_create(int timeout);
+int poller_add(poller_t *poller, poller_action_t *action);
+int poller_del(poller_t *poller, int fd);
+void *poller_run(void *args);
+void poller_stop(poller_t *poller);
+void poller_destroy(poller_t **poller);
