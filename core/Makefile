@@ -2,9 +2,24 @@ include Makefile.in
 
 SUBDIRS := src tests
 
-.PHONY: all $(SUBDIRS)
+SOURCES := $(wildcard ./src/*.c)
+HEADERS := $(wildcard ./src/*.h)
+OBJECTS := $(SOURCES:.c=.o)
+
+.PHONY: all test shared $(SUBDIRS)
 
 all: $(SUBDIRS)
+
+shared: test $(SUBDIRS)
+	rm -rf ./lib/libsctpcore.so
+	gcc -shared -o ./lib/libsctpcore.so $(OBJECTS) $(LDFLAGS)
+
+install: ./lib/libsctpcore.so
+	cp ./lib/libsctpcore.so /usr/local/lib
+	ldconfig
+
+test: $(SUBDIRS)
+	./tests/tests
 
 $(SUBDIRS):
 	$(VERBOSE)$(MAKE) -C $@
