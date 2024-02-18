@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 	"unsafe"
 )
 
@@ -28,6 +29,10 @@ import (
 // If we want to handle messages received from various sockets
 // monitored by this poller, then we need to register a go function
 // as an action callback.
+// This approach might have some problems:
+// - thundering herd
+// - thread starvation
+// - if the callback functions block, they will block the poller.
 type Poller struct {
 	wg     sync.WaitGroup
 	poller *C.struct_poller
@@ -49,8 +54,13 @@ func NewPoller(timeout int) *Poller {
 //export pollerAction
 func pollerAction(fd C.int, args unsafe.Pointer) {
 	mmsg := (*C.struct_mmsg)(args)
-	// TODO: how can I propagate the context up to here?
-	numMsg, err := RecvMultiMsg(context.Background(), int(fd), mmsg)
+	// TODO: can I propagate the main context up to here?
+	// I tried to wrap the context in the args, but cgo complained
+	// about passing Go pointers to Go pointers.
+	// panic: runtime error: cgo argument has Go pointer to Go pointer
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	numMsg, err := RecvMultiMsg(ctx, int(fd), mmsg)
 	if err != nil {
 		fmt.Printf("error reading message: %s", err.Error())
 		return
@@ -58,9 +68,12 @@ func pollerAction(fd C.int, args unsafe.Pointer) {
 	mmsgit := GetMultiMsgIterator(mmsg)
 	bytes := mmsgit.Next()
 	for numMsg > 0 {
-		fmt.Printf("received buf: %s, len: %d\n",
-			string(bytes), len(bytes))
+		// TODO: this is example code; printf is commented out to not
+		// pollute stdout.
+		//fmt.Printf("received buf: %s, len: %d\n",
+		//	string(bytes), len(bytes))
 		bytes = mmsgit.Next()
+		_ = bytes
 		numMsg--
 	}
 }
