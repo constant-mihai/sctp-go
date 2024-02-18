@@ -6,15 +6,15 @@ import (
 	"time"
 )
 
-func TestPoller(t *testing.T) {
+func TestReceiver(t *testing.T) {
 	server := NewSctpServer("0.0.0.0", 10203)
 	client := NewSctpClient("127.0.0.1", 30201)
-	pollers := []*Poller{
-		NewPoller(100 /* timeout in milliseconds */),
-		NewPoller(100 /* timeout in milliseconds */),
+	receiver := []*Receiver{
+		NewReceiver(100 /* timeout in milliseconds */),
+		NewReceiver(100 /* timeout in milliseconds */),
 	}
 
-	for _, p := range pollers {
+	for _, p := range receiver {
 		p.Add(server.FD())
 		p.Run()
 	}
@@ -32,7 +32,7 @@ func TestPoller(t *testing.T) {
 		}
 	}
 
-	for _, p := range pollers {
+	for _, p := range receiver {
 		p.Close()
 	}
 }

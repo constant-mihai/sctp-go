@@ -4,11 +4,11 @@ package sctp
 // #cgo LDFLAGS: -L${SRCDIR}/core/lib -lsctpcore
 // #include <stdlib.h>
 // #include "adapter.h"
-// extern void pollerAction(int fd, void* args);
+// extern void receiveMultiMessage(int fd, void* args);
 // static poller_action_t *poller_add_external(poller_t *poller, int fd, void *args) {
 //     poller_action_t *action = calloc(1, sizeof(poller_action_t));
 //     action->fd = fd;
-//     action->cb = pollerAction;
+//     action->cb = receiveMultiMessage;
 //     action->args = args;
 //	   if (poller_add(poller, action)) {
 //	      return NULL;
@@ -26,23 +26,33 @@ import (
 )
 
 // This is a wrapper structure for an epoll implemented in C.
-// If we want to handle messages received from various sockets
-// monitored by this poller, then we need to register a go function
-// as an action callback.
-// This approach might have some problems:
-// - thundering herd
-// - thread starvation
-// - if the callback functions block, they will block the poller.
-type Poller struct {
+//
+// Here are two possible ways to use the poller:
+//  1. Pool of pollers which monitor multiple sockets.
+//     If we want to handle messages received from various sockets
+//     monitored by this poller, then we need to register a go function
+//     as an action callback.
+//     The poller wakes up when there's an event happening for an FD.
+//     It then executes the registered callback for the given FD.
+//     This approach might have some problems.
+//     Further exploration topics:
+//     - thundering herd
+//     - thread starvation
+//     - if the callback functions block, they will block the poller.
+//  2. One poller which delegates work to other threads.
+//     When the poller receives an event, it enqueues the FD in a shared
+//     queue or ring. Worker threads started separately dequeue and read from
+//     the dequeued socket FD.
+type Receiver struct {
 	wg     sync.WaitGroup
 	poller *C.struct_poller
 	mmsg   *C.struct_mmsg
 	// TODO: store an array for added actions. free them on Close().
 }
 
-func NewPoller(timeout int) *Poller {
+func NewReceiver(timeout int) *Receiver {
 	mmsg := CreateMultiMsg(10, 9216)
-	return &Poller{
+	return &Receiver{
 		wg:     sync.WaitGroup{},
 		poller: C.poller_create(C.int(timeout)),
 		mmsg:   mmsg,
@@ -51,8 +61,8 @@ func NewPoller(timeout int) *Poller {
 
 // https://stackoverflow.com/questions/6125683/call-go-functions-from-c
 
-//export pollerAction
-func pollerAction(fd C.int, args unsafe.Pointer) {
+//export receiveMultiMessage
+func receiveMultiMessage(fd C.int, args unsafe.Pointer) {
 	mmsg := (*C.struct_mmsg)(args)
 	// TODO: can I propagate the main context up to here?
 	// I tried to wrap the context in the args, but cgo complained
@@ -68,7 +78,7 @@ func pollerAction(fd C.int, args unsafe.Pointer) {
 	mmsgit := GetMultiMsgIterator(mmsg)
 	bytes := mmsgit.Next()
 	for numMsg > 0 {
-		// TODO: this is example code; printf is commented out to not
+		// TODO: this is example code; Printf is commented out to not
 		// pollute stdout.
 		//fmt.Printf("received buf: %s, len: %d\n",
 		//	string(bytes), len(bytes))
@@ -78,7 +88,7 @@ func pollerAction(fd C.int, args unsafe.Pointer) {
 	}
 }
 
-func (p *Poller) Add(fd int) {
+func (p *Receiver) Add(fd int) {
 	action := C.poller_add_external(
 		p.poller,
 		C.int(fd),
@@ -88,7 +98,7 @@ func (p *Poller) Add(fd int) {
 	_ = action
 }
 
-func (p *Poller) Run() {
+func (p *Receiver) Run() {
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
@@ -96,7 +106,7 @@ func (p *Poller) Run() {
 	}()
 }
 
-func (p *Poller) Close() {
+func (p *Receiver) Close() {
 	// TODO: poller_stop should block until the poller actually stops
 	C.poller_stop(p.poller)
 	p.wg.Wait()
