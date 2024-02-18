@@ -15,7 +15,9 @@ func TestReceiver(t *testing.T) {
 	}
 
 	for _, p := range receiver {
-		p.Add(server.FD())
+		if err := p.Add(server.FD()); err != nil {
+			t.Errorf("Error adding fd to receiver: %s\n", err.Error())
+		}
 		p.Run()
 	}
 

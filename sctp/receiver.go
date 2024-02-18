@@ -5,7 +5,7 @@ package sctp
 // #include <stdlib.h>
 // #include "adapter.h"
 // extern void receiveMultiMessage(int fd, void* args);
-// static poller_action_t *poller_add_external(poller_t *poller, int fd, void *args) {
+// static poller_action_t *poller_add_receiver(poller_t *poller, int fd, void *args) {
 //     poller_action_t *action = calloc(1, sizeof(poller_action_t));
 //     action->fd = fd;
 //     action->cb = receiveMultiMessage;
@@ -27,22 +27,18 @@ import (
 
 // This is a wrapper structure for an epoll implemented in C.
 //
-// Here are two possible ways to use the poller:
-//  1. Pool of pollers which monitor multiple sockets.
-//     If we want to handle messages received from various sockets
-//     monitored by this poller, then we need to register a go function
-//     as an action callback.
-//     The poller wakes up when there's an event happening for an FD.
-//     It then executes the registered callback for the given FD.
-//     This approach might have some problems.
-//     Further exploration topics:
-//     - thundering herd
-//     - thread starvation
-//     - if the callback functions block, they will block the poller.
-//  2. One poller which delegates work to other threads.
-//     When the poller receives an event, it enqueues the FD in a shared
-//     queue or ring. Worker threads started separately dequeue and read from
-//     the dequeued socket FD.
+// This intended to be used as a pool of pollers which monitor multiple sockets.
+// If we want to handle messages received from various sockets
+// monitored by a poller, then we need to register a go function
+// as an action callback.
+// The poller wakes up when there's an event happening for an FD.
+// It then executes the registered callback for the given FD.
+//
+// This approach might have some problems.
+// Further exploration topics:
+// - thundering herd
+// - thread starvation
+// - if the callback functions block, they will block the poller.
 type Receiver struct {
 	wg     sync.WaitGroup
 	poller *C.struct_poller
@@ -70,6 +66,7 @@ func receiveMultiMessage(fd C.int, args unsafe.Pointer) {
 	// panic: runtime error: cgo argument has Go pointer to Go pointer
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
+	// TODO: is it ok to timeout? does it mean there's nothing to read?
 	numMsg, err := RecvMultiMsg(ctx, int(fd), mmsg)
 	if err != nil {
 		fmt.Printf("error reading message: %s", err.Error())
@@ -88,14 +85,19 @@ func receiveMultiMessage(fd C.int, args unsafe.Pointer) {
 	}
 }
 
-func (p *Receiver) Add(fd int) {
-	action := C.poller_add_external(
+// TODO: what happens if the same FD is added multiple times?
+func (p *Receiver) Add(fd int) error {
+	action := C.poller_add_receiver(
 		p.poller,
 		C.int(fd),
 		(unsafe.Pointer)(p.mmsg),
 	)
+	if action == nil {
+		return fmt.Errorf("error adding action to poller")
+	}
 	// TODO: action is allocated by C and needs to be freed.
 	_ = action
+	return nil
 }
 
 func (p *Receiver) Run() {
