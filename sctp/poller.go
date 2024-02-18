@@ -45,7 +45,6 @@ func NewPoller(timeout int) *Poller {
 }
 
 // https://stackoverflow.com/questions/6125683/call-go-functions-from-c
-type callback func(fd C.int, args unsafe.Pointer)
 
 //export pollerAction
 func pollerAction(fd C.int, args unsafe.Pointer) {
