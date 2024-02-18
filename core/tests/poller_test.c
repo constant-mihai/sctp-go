@@ -45,9 +45,9 @@ int poller_test() {
         .args = poller,
     };
 
-    int err = poller_add(poller, &action);
-    if (err) {
-        LOG("error: %s", strerror(err));
+    int ret = poller_add(poller, &action);
+    if (ret < 0) {
+        LOG("error: %s", strerror(errno));
         return -1;
     }
 

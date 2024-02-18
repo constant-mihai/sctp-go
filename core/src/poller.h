@@ -1,6 +1,6 @@
 #pragma once
 
-typedef struct {
+typedef struct poller {
     int epoll_fd;
     int *fds;
     // timeout in miliseconds
@@ -13,7 +13,7 @@ typedef struct {
 
 typedef void (poller_action_f)(int fd, void *args);
 
-typedef struct {
+typedef struct poller_action {
     // fd is the fd registerd with epoll_ctl. 
     int fd;
     // cb and args are opaque data which encapsulates callbacks

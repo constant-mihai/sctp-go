@@ -2,6 +2,7 @@
 
 #include "sctp.h"
 #include "mmsg.h"
+#include "poller.h"
 
 // TODO: figure out error propagation and error handling.
 int DefaultSctpServer(const char *ip, uint16_t port);

@@ -33,7 +33,7 @@ int poller_add(poller_t *poller, poller_action_t *action) {
     ev.events = EPOLLIN|EPOLLEXCLUSIVE;
     ev.data.ptr = action;
     if (epoll_ctl(poller->epoll_fd, EPOLL_CTL_ADD, action->fd, &ev)) {
-        return errno;
+        return -1;
     }
 
     return 0;
@@ -42,7 +42,7 @@ int poller_add(poller_t *poller, poller_action_t *action) {
 int poller_del(poller_t *poller, int fd) {
     // TODO: free fds from poller->fds;
     if (epoll_ctl(poller->epoll_fd, EPOLL_CTL_DEL, fd, NULL)) {
-        return errno;
+        return -1;
     }
 
     return 0;

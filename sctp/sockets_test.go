@@ -31,7 +31,7 @@ func TestSocketsSingleMessage(t *testing.T) {
 	go func(ctx context.Context) {
 		defer wg.Done()
 		for ctx.Err() == nil {
-			bytes, ip, port, err := server.RecvMsg(ctx)
+			bytes, ip, port, err := RecvMsg(ctx, server.FD())
 			if err != nil {
 				t.Errorf("error reading message: %s", err.Error())
 			}
@@ -43,7 +43,7 @@ func TestSocketsSingleMessage(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 
-	nsent, err := client.SendMsg(ctx, "127.0.0.1", 12345, []byte("go test"))
+	nsent, err := SendMsg(ctx, client.FD(), "127.0.0.1", 12345, []byte("go test"))
 	if err != nil {
 		t.Errorf("Got error on send: %s", err.Error())
 	}
@@ -69,7 +69,7 @@ func TestSocketsMultiMessage(t *testing.T) {
 	go func(ctx context.Context) {
 		defer wg.Done()
 		for ctx.Err() == nil {
-			numMsg, err := server.RecvMultiMsg(ctx, mmsg)
+			numMsg, err := RecvMultiMsg(ctx, server.FD(), mmsg)
 			if err != nil {
 				t.Errorf("error reading message: %s", err.Error())
 			}
@@ -87,7 +87,7 @@ func TestSocketsMultiMessage(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 
-	nsent, err := client.SendMsg(ctx, "127.0.0.1", 12346, []byte("go test"))
+	nsent, err := SendMsg(ctx, client.FD(), "127.0.0.1", 12346, []byte("go test"))
 	if err != nil {
 		t.Errorf("Got error on send: %s", err.Error())
 	}
@@ -96,4 +96,8 @@ func TestSocketsMultiMessage(t *testing.T) {
 	if messages < nsent {
 		t.Errorf("Expected messages: %d to be >= nsent: %d", messages, nsent)
 	}
+}
+
+func TestSocketsNotifications(t *testing.T) {
+	// TODO
 }

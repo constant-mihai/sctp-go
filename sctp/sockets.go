@@ -26,24 +26,28 @@ import (
 // directory, not in subdirectories. The default C and C++ compilers may be changed by the CC
 // and CXX environment variables, respectively; those environment variables may include command line options.
 type Socket struct {
-	FD int
+	fd int
 }
 
 func NewSctpServer(host string, port int) *Socket {
 	socket := Socket{}
 	fd := C.DefaultSctpServer(C.CString(host), C.uint16_t(port))
-	socket.FD = int(fd)
+	socket.fd = int(fd)
 	return &socket
 }
 
 func NewSctpClient(host string, port int) *Socket {
 	socket := Socket{}
 	fd := C.DefaultSctpClient(C.CString(host), C.uint16_t(port))
-	socket.FD = int(fd)
+	socket.fd = int(fd)
 	return &socket
 }
 
-func (s *Socket) SendMsg(ctx context.Context, dst string, port int, bytes []byte) (int, error) {
+func (s *Socket) FD() int {
+	return s.fd
+}
+
+func SendMsg(ctx context.Context, fd int, dst string, port int, bytes []byte) (int, error) {
 	// Go []byte slice to C array
 	// The C array is allocated in the C heap using malloc.
 	// It is the caller's responsibility to arrange for it to be
@@ -53,7 +57,7 @@ func (s *Socket) SendMsg(ctx context.Context, dst string, port int, bytes []byte
 	defer C.free(cBufBytes)
 	for ctx.Err() == nil {
 		nsent, err := C.SendMsg(
-			C.int(s.FD),
+			C.int(fd),
 			C.CString(dst),
 			C.int(port),
 			(*C.char)(cBufBytes),
@@ -79,7 +83,7 @@ func (s *Socket) SendMsg(ctx context.Context, dst string, port int, bytes []byte
 	return 0, nil
 }
 
-func (s *Socket) SendMultiMsg(dst string, port int, mmsg *C.struct_mmsg_t) int {
+func SendMultiMsg(fd int, dst string, port int, mmsg *C.struct_mmsg_t) int {
 	//TODO
 	return 0
 }
@@ -90,7 +94,7 @@ func (s *Socket) SendMultiMsg(dst string, port int, mmsg *C.struct_mmsg_t) int {
 // why the SetDeadline() pattern is preferred. If there's good reason for
 // it, then I should switch.
 // TODO: should this be blocking instead?
-func (s *Socket) RecvMsg(ctx context.Context) (bytes []byte, src net.IP, port int, err error) {
+func RecvMsg(ctx context.Context, fd int) (bytes []byte, src net.IP, port int, err error) {
 	cBufBytes := C.malloc(C.sizeof_char * 9216)
 	defer C.free(cBufBytes)
 
@@ -101,7 +105,7 @@ func (s *Socket) RecvMsg(ctx context.Context) (bytes []byte, src net.IP, port in
 LOOP:
 	for ctx.Err() == nil {
 		nread, readErr := C.RecvMsg(
-			C.int(s.FD),
+			C.int(fd),
 			(*C.char)(cBufBytes),
 			9216, /* buf len */
 			&saddr, &saddr_len,
@@ -150,10 +154,10 @@ LOOP:
 // I like the ctx pattern better. I should understand,
 // why the SetDeadline() pattern is preferred. If there's good reason for
 // it, then I should switch.
-func (s *Socket) RecvMultiMsg(ctx context.Context, mmsg *C.struct_mmsg) (ret int, err error) {
+func RecvMultiMsg(ctx context.Context, fd int, mmsg *C.struct_mmsg) (ret int, err error) {
 LOOP:
 	for ctx.Err() == nil {
-		nread, readErr := C.RecvMultiMsg(C.int(s.FD), mmsg)
+		nread, readErr := C.RecvMultiMsg(C.int(fd), mmsg)
 		switch {
 		case nread < 0:
 			errno := readErr.(syscall.Errno)
@@ -175,6 +179,10 @@ LOOP:
 
 	return
 
+}
+
+func (s *Socket) Close() {
+	// TODO: implement C equivalent for this and call it here.
 }
 
 // TODO: tests don't accept CGO:
