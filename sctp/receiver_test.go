@@ -14,11 +14,11 @@ func TestReceiver(t *testing.T) {
 		NewReceiver(100 /* timeout in milliseconds */),
 	}
 
-	for _, p := range receiver {
-		if err := p.Add(server.FD()); err != nil {
+	for _, r := range receiver {
+		if err := r.Add(server.FD()); err != nil {
 			t.Errorf("Error adding fd to receiver: %s\n", err.Error())
 		}
-		p.Run()
+		r.Run()
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -34,7 +34,7 @@ func TestReceiver(t *testing.T) {
 		}
 	}
 
-	for _, p := range receiver {
-		p.Close()
+	for _, r := range receiver {
+		r.Close()
 	}
 }
