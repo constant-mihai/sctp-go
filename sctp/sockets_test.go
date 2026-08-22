@@ -2,7 +2,9 @@ package sctp
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -32,6 +34,9 @@ func TestSocketsSingleMessage(t *testing.T) {
 		defer wg.Done()
 		for ctx.Err() == nil {
 			msg, ip, port, err := RecvMsg(ctx, server.FD())
+			if errors.Is(err, io.EOF) {
+				return
+			}
 			if err != nil {
 				t.Errorf("error reading message: %s", err.Error())
 			}

@@ -8,6 +8,7 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"syscall"
 	"unsafe"
@@ -127,8 +128,10 @@ LOOP:
 			err = fmt.Errorf("error reading message: %w", errno)
 			return
 		case nread == 0:
-			// TODO: when can this happen?
-			err = fmt.Errorf("nread is 0")
+			// SCTP forbids zero-length user data, so a 0-byte read is not
+			// an empty message: the association ended.
+			err = io.EOF
+			return
 		default:
 			msg = Message{
 				Bytes:          C.GoBytes(cBufBytes, nread),
@@ -176,9 +179,10 @@ LOOP:
 			err = fmt.Errorf("error reading message: %w", errno)
 			return
 		case nread == 0:
-			// TODO: when can this happen?
-			err = fmt.Errorf("nread is 0")
-			ret = int(nread)
+			// recvmmsg returns a message count, so 0 means nothing was
+			// ready. Under MSG_DONTWAIT that is not an error; let the
+			// context bound the retry.
+			continue
 		default:
 			ret = int(nread)
 			break LOOP
