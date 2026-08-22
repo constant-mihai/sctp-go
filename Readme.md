@@ -195,6 +195,9 @@ For this repo pinning can happen only after a message has been read and hashed.
 
 ### Do the messages have to be copied out of C?
 
+TODO; Disclaimer: this is llm generated and left here more as a reminder to myself on what can
+be explored next. According to the LLM the C.GoBytes mem copy can be avoided.
+
 No, and this was the most useful thing to learn. Today every message is copied twice
 after the kernel writes it: once by `recvmmsg` into the buffers `mmsg_create`
 allocated, and once by `C.GoBytes` into a fresh Go slice. `GoBytes` is a `mallocgc`
