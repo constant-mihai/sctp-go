@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+
 typedef struct poller {
     int epoll_fd;
     int *fds;
@@ -11,18 +13,22 @@ typedef struct poller {
     int retval;
 } poller_t;
 
-typedef void (poller_action_f)(int fd, void *args);
+// args is an integer rather than a void*: the Go side passes a
+// runtime/cgo.Handle through it, which is a uintptr. Converting that back into
+// an unsafe.Pointer would be flagged by go vet, and a plain Go pointer cannot
+// be stored in C memory at all.
+typedef void (poller_action_f)(int fd, uintptr_t args);
 
 typedef struct poller_action {
-    // fd is the fd registerd with epoll_ctl. 
+    // fd is the fd registerd with epoll_ctl.
     int fd;
     // cb and args are opaque data which encapsulates callbacks
     // that the user of the poller wants to call when
     // the event triggers. For example, if the FD belongs
     // to an SCTP socket and the event is EPOLLIN,
-    // then the user will probably want to read from the socket fd. 
+    // then the user will probably want to read from the socket fd.
     poller_action_f *cb;
-    void *args;
+    uintptr_t args;
 } poller_action_t;
 
 poller_t *poller_create(int timeout);

@@ -10,9 +10,6 @@ import (
 func TestPoller(t *testing.T) {
 	server := NewSctpServer("0.0.0.0", 20304)
 	client := NewSctpClient("127.0.0.1", 40302)
-	PollerQueue = NewQueue()
-	// TODO: this would be ideal, see comments in the poller.
-	//poller := NewPoller(queue, 100 /* timeout in milliseconds */)
 	poller := NewPoller(100 /* timeout in milliseconds */)
 
 	poller.Add(server.FD())
@@ -34,15 +31,18 @@ func TestPoller(t *testing.T) {
 		defer wg.Done()
 		mmsg := CreateMultiMsg(10, 9216)
 		defer DestroyMultiMsg(&mmsg)
-		for ctx.Err() == nil {
-			// get something fom the queue
-			fd, err := PollerQueue.Pop()
-			if err != nil {
-				t.Errorf("error popping from the queue")
-			}
-			if fd < 0 {
-				time.Sleep(100 * time.Millisecond)
-				continue
+		for {
+			// Blocking handoff: the poller closes the queue on Close, and
+			// the context bounds the wait if it never produces anything.
+			var fd int
+			select {
+			case <-ctx.Done():
+				return
+			case v, ok := <-poller.Queue():
+				if !ok {
+					return
+				}
+				fd = v
 			}
 
 			// The fd is only known to have been readable when the poller
