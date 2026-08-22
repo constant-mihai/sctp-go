@@ -1,5 +1,6 @@
 #include "log.h"
 #include "mmsg.h"
+#include "sctp.h"
 
 #define __USE_GNU
 #include <assert.h>
@@ -99,8 +100,13 @@ void mmsg_message_dump(mmsg_t *mmsg, int nmsg) {
         n += sprintf(buf+n, "iovec[%d]:\n", i);
 
         if (hdr.msg_flags & MSG_NOTIFICATION) {
-            const union sctp_notification *notification = hdr.msg_iov->iov_base;
-            n += sprintf(buf+n, "notification, type: %d\n", notification->sn_header.sn_type);
+            char notification[512] = {0};
+            if (sctp_notification_str(hdr.msg_iov->iov_base,
+                                      mmsg->vec[i].msg_len,
+                                      notification,
+                                      sizeof(notification)) >= 0) {
+                n += sprintf(buf+n, "notification: %s\n", notification);
+            }
         }
         int hdr_len = mmsg->vec[i].msg_len;
         if (hdr_len == 0) continue;
@@ -151,6 +157,7 @@ mmsg_bytes_t mmsg_iterator_next(mmsg_iterator_t* iterator) {
     mmsg_bytes_t bytes = {
         .buf = NULL,
         .len = 0,
+        .flags = 0,
     };
     if (iterator->index == iterator->mmsg->vec_len - 1) {
         iterator->index = -1;
@@ -160,5 +167,6 @@ mmsg_bytes_t mmsg_iterator_next(mmsg_iterator_t* iterator) {
     iterator->index++;
     bytes.buf = iterator->mmsg->vec[iterator->index].msg_hdr.msg_iov->iov_base;
     bytes.len = iterator->mmsg->vec[iterator->index].msg_len;
+    bytes.flags = iterator->mmsg->vec[iterator->index].msg_hdr.msg_flags;
     return bytes;
 }

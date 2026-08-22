@@ -2,7 +2,7 @@ package sctp
 
 import (
 	"context"
-	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -20,10 +20,21 @@ func TestPoller(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+
+	// Counted rather than printed: the send loop below runs flat out for
+	// three seconds, so one line per message buries the test output.
+	var (
+		wg             sync.WaitGroup
+		nreceived      int
+		nbytes         int
+		nnotifications int
+	)
+	wg.Add(1)
 	go func(ctx context.Context) {
+		defer wg.Done()
 		mmsg := CreateMultiMsg(10, 9216)
 		defer DestroyMultiMsg(&mmsg)
-		for ctx.Err() != nil {
+		for ctx.Err() == nil {
 			// get something fom the queue
 			fd, err := PollerQueue.Pop()
 			if err != nil {
@@ -34,21 +45,27 @@ func TestPoller(t *testing.T) {
 				continue
 			}
 
-			numMsg, err := RecvMultiMsg(context.Background(), int(fd), mmsg)
+			// The fd is only known to have been readable when the poller
+			// enqueued it, so bound the read instead of spinning on EAGAIN
+			// with a background context.
+			readCtx, readCancel := context.WithTimeout(ctx, 100*time.Millisecond)
+			numMsg, err := RecvMultiMsg(readCtx, int(fd), mmsg)
+			readCancel()
 			if err != nil {
-				fmt.Printf("error reading message: %s", err.Error())
-				return
+				t.Logf("error reading message: %s", err.Error())
+				continue
 			}
 
 			mmsgit := GetMultiMsgIterator(mmsg)
-			bytes := mmsgit.Next()
-			for numMsg > 0 {
-				// TODO: this doesn't print anything. Why?
-				fmt.Printf("received buf: %s, len: %d\n",
-					string(bytes), len(bytes))
-				bytes = mmsgit.Next()
-				_ = bytes
-				numMsg--
+			for i := 0; i < numMsg; i++ {
+				msg := mmsgit.Next()
+				if msg.IsNotification {
+					nnotifications++
+					t.Logf("sctp notification: %s", msg)
+					continue
+				}
+				nreceived++
+				nbytes += len(msg.Bytes)
 			}
 		}
 	}(ctx)
@@ -64,6 +81,11 @@ func TestPoller(t *testing.T) {
 			t.Errorf("Got error on send: %s", err.Error())
 		}
 	}
+
+	// Wait before reading the counters: the consumer goroutine owns them.
+	wg.Wait()
+	t.Logf("received %d messages, %d bytes, %d notifications",
+		nreceived, nbytes, nnotifications)
 
 	poller.Close()
 }

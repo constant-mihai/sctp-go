@@ -11,6 +11,9 @@ typedef struct mmsg {
 typedef struct {
     const char *buf;
     int len;
+    // msg_flags as reported by recvmmsg for this message; MSG_NOTIFICATION
+    // means buf holds a union sctp_notification instead of user data.
+    int flags;
 } mmsg_bytes_t;
 
 // not thread safe.

@@ -94,21 +94,25 @@ func SendMultiMsg(fd int, dst string, port int, mmsg *C.struct_mmsg_t) int {
 // why the SetDeadline() pattern is preferred. If there's good reason for
 // it, then I should switch.
 // TODO: should this be blocking instead?
-func RecvMsg(ctx context.Context, fd int) (bytes []byte, src net.IP, port int, err error) {
+func RecvMsg(ctx context.Context, fd int) (msg Message, src net.IP, port int, err error) {
 	cBufBytes := C.malloc(C.sizeof_char * 9216)
 	defer C.free(cBufBytes)
 
 	cSrcBytes := C.malloc(C.sizeof_char * 100)
 	defer C.free(cSrcBytes)
 	saddr := C.struct_sockaddr{}
-	saddr_len := C.uint(0)
+	var flags C.int
 LOOP:
 	for ctx.Err() == nil {
+		// The kernel reads saddr_len as the size of the address buffer and
+		// writes back the size it filled in, so it has to be reset before
+		// every call. Left at 0, no address is copied at all.
+		saddr_len := C.uint(unsafe.Sizeof(saddr))
 		nread, readErr := C.RecvMsg(
 			C.int(fd),
 			(*C.char)(cBufBytes),
 			9216, /* buf len */
-			&saddr, &saddr_len,
+			&saddr, &saddr_len, &flags,
 		)
 		switch {
 		case nread < 0:
@@ -126,7 +130,10 @@ LOOP:
 			// TODO: when can this happen?
 			err = fmt.Errorf("nread is 0")
 		default:
-			bytes = C.GoBytes(cBufBytes, nread)
+			msg = Message{
+				Bytes:          C.GoBytes(cBufBytes, nread),
+				IsNotification: flags&C.MSG_NOTIFICATION != 0,
+			}
 			ret, getAddrErr := C.GetAddress(
 				&saddr,
 				(*C.char)(cSrcBytes),
@@ -139,14 +146,15 @@ LOOP:
 					err = fmt.Errorf("error getting address: %w", errno)
 				}
 			} else {
-				srcBytes := C.GoBytes(cSrcBytes, 100)
-				src = net.ParseIP(string(srcBytes))
+				// GoString stops at the NUL; GoBytes would hand ParseIP the
+				// whole padded buffer, which never parses.
+				src = net.ParseIP(C.GoString((*C.char)(cSrcBytes)))
 			}
 			break LOOP
 		}
 	}
 
-	return bytes, src, port, err
+	return msg, src, port, err
 }
 
 // TODO: passing a context is not the idiomatic way for I/O ops in go.
@@ -197,6 +205,44 @@ func DestroyMultiMsg(mmsg **C.struct_mmsg) {
 	C.DestroyMmsg(mmsg)
 }
 
+// Message is one message read from an SCTP socket. Notifications are delivered
+// on the same socket as user data, so the only thing telling them apart is the
+// MSG_NOTIFICATION flag: without checking it, a notification looks like a short
+// burst of binary garbage.
+type Message struct {
+	Bytes          []byte
+	IsNotification bool
+}
+
+// String decodes notifications into a readable form and leaves user data alone.
+func (m Message) String() string {
+	if !m.IsNotification {
+		return string(m.Bytes)
+	}
+	return NotificationString(m.Bytes)
+}
+
+// NotificationString formats a message received with MSG_NOTIFICATION set.
+func NotificationString(bytes []byte) string {
+	if len(bytes) == 0 {
+		return ""
+	}
+
+	out := C.malloc(C.sizeof_char * 512)
+	defer C.free(out)
+
+	n := C.NotificationString(
+		(*C.char)(unsafe.Pointer(&bytes[0])),
+		C.int(len(bytes)),
+		(*C.char)(out),
+		512, /* out len */
+	)
+	if n < 0 {
+		return fmt.Sprintf("undecodable notification, len: %d", len(bytes))
+	}
+	return C.GoStringN((*C.char)(out), n)
+}
+
 type MultiMsgIterator struct {
 	iterator C.struct_mmsg_iterator
 }
@@ -207,7 +253,10 @@ func GetMultiMsgIterator(mmsg *C.struct_mmsg) *MultiMsgIterator {
 	}
 }
 
-func (mmit *MultiMsgIterator) Next() []byte {
+func (mmit *MultiMsgIterator) Next() Message {
 	mmsgBytes := C.mmsg_iterator_next(&mmit.iterator)
-	return C.GoBytes(unsafe.Pointer(mmsgBytes.buf), mmsgBytes.len)
+	return Message{
+		Bytes:          C.GoBytes(unsafe.Pointer(mmsgBytes.buf), mmsgBytes.len),
+		IsNotification: mmsgBytes.flags&C.MSG_NOTIFICATION != 0,
+	}
 }

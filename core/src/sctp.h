@@ -35,6 +35,11 @@ int sctp_get_ip_str(const struct sockaddr *saddr,
 int sctp_listen(int sockfd);
 int sctp_socket(const char *ip, uint16_t port, sctp_options_container_t options_container);
 
+// sctp_notification_str formats a message received with MSG_NOTIFICATION set
+// into out. Returns the number of bytes written, or -1 if buf is too short to
+// hold a notification header.
+int sctp_notification_str(const void *buf, int buf_len, char *out, int out_len);
+
 // options
 void sctp_option_set_nonblocking(int sockfd, void *args);
 void sctp_option_set_interleave(int sockfd, void *args);

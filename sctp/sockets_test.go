@@ -31,13 +31,17 @@ func TestSocketsSingleMessage(t *testing.T) {
 	go func(ctx context.Context) {
 		defer wg.Done()
 		for ctx.Err() == nil {
-			bytes, ip, port, err := RecvMsg(ctx, server.FD())
+			msg, ip, port, err := RecvMsg(ctx, server.FD())
 			if err != nil {
 				t.Errorf("error reading message: %s", err.Error())
 			}
-			messages += len(bytes)
+			if msg.IsNotification {
+				fmt.Printf("sctp notification: %s\n", msg)
+				continue
+			}
+			messages += len(msg.Bytes)
 			fmt.Printf("received buf: %s, len: %d from: %s:%d\n",
-				string(bytes), len(bytes), ip.String(), port)
+				msg, len(msg.Bytes), ip.String(), port)
 		}
 	}(ctx)
 
@@ -74,13 +78,15 @@ func TestSocketsMultiMessage(t *testing.T) {
 				t.Errorf("error reading message: %s", err.Error())
 			}
 			mmsgit := GetMultiMsgIterator(mmsg)
-			bytes := mmsgit.Next()
-			for numMsg > 0 {
-				messages += len(bytes)
+			for i := 0; i < numMsg; i++ {
+				msg := mmsgit.Next()
+				if msg.IsNotification {
+					fmt.Printf("sctp notification: %s\n", msg)
+					continue
+				}
+				messages += len(msg.Bytes)
 				fmt.Printf("received buf: %s, len: %d\n",
-					string(bytes), len(bytes))
-				bytes = mmsgit.Next()
-				numMsg--
+					msg, len(msg.Bytes))
 			}
 		}
 	}(ctx)

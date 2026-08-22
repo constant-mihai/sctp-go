@@ -73,15 +73,16 @@ func receiveMultiMessage(fd C.int, args unsafe.Pointer) {
 		return
 	}
 	mmsgit := GetMultiMsgIterator(mmsg)
-	bytes := mmsgit.Next()
-	for numMsg > 0 {
+	for i := 0; i < numMsg; i++ {
+		msg := mmsgit.Next()
+		if msg.IsNotification {
+			fmt.Printf("sctp notification: %s\n", msg)
+			continue
+		}
 		// TODO: this is example code; Printf is commented out to not
 		// pollute stdout.
 		//fmt.Printf("received buf: %s, len: %d\n",
-		//	string(bytes), len(bytes))
-		bytes = mmsgit.Next()
-		_ = bytes
-		numMsg--
+		//	msg, len(msg.Bytes))
 	}
 }
 

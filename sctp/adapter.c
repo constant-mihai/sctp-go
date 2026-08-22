@@ -88,9 +88,35 @@ int SendMsg(int sockfd, const char* dst, int port, const char* buf, int len) {
 }
 
 // TODO: should this be blocking instead?
-int RecvMsg(int sockfd, char* buf, int buf_len, struct sockaddr *saddr, unsigned int *saddr_len) {
-    assert(saddr != NULL && saddr_len != NULL && buf != NULL);
-    return recvfrom(sockfd, buf, buf_len, MSG_DONTWAIT, saddr, saddr_len);
+// recvmsg rather than recvfrom: it reports msg_flags, which is the only way to
+// tell an SCTP notification apart from user data. On entry *saddr_len must hold
+// the size of saddr; on return it holds the size the kernel filled in.
+int RecvMsg(int sockfd, char* buf, int buf_len, struct sockaddr *saddr,
+            unsigned int *saddr_len, int *flags) {
+    assert(saddr != NULL && saddr_len != NULL && buf != NULL && flags != NULL);
+    struct iovec iov = {
+        .iov_base = buf,
+        .iov_len = buf_len,
+    };
+    struct msghdr msg = {
+        .msg_name = saddr,
+        .msg_namelen = *saddr_len,
+        .msg_iov = &iov,
+        .msg_iovlen = 1,
+    };
+
+    int nread = recvmsg(sockfd, &msg, MSG_DONTWAIT);
+    if (nread < 0) {
+        return nread;
+    }
+
+    *saddr_len = msg.msg_namelen;
+    *flags = msg.msg_flags;
+    return nread;
+}
+
+int NotificationString(const char *buf, int buf_len, char *out, int out_len) {
+    return sctp_notification_str(buf, buf_len, out, out_len);
 }
 
 int GetAddress(const struct sockaddr *saddr, char *buf, int buf_len, uint16_t *port) {

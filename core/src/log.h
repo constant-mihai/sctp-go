@@ -12,9 +12,11 @@ sctp_log(const char* file, int line, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    printf("%s:%d ", file, line);
-    vprintf(fmt, args);
-    printf("\n");
+    // stderr, not stdout: under `go test` stdout is a pipe and therefore
+    // block-buffered, so log lines would be swallowed. stderr is unbuffered.
+    fprintf(stderr, "%s:%d ", file, line);
+    vfprintf(stderr, fmt, args);
+    fprintf(stderr, "\n");
 
     va_end(args);
 }
