@@ -45,28 +45,42 @@ func TestPoller(t *testing.T) {
 				fd = v
 			}
 
-			// The fd is only known to have been readable when the poller
-			// enqueued it, so bound the read instead of spinning on EAGAIN
-			// with a background context.
-			readCtx, readCancel := context.WithTimeout(ctx, 100*time.Millisecond)
-			numMsg, err := RecvMultiMsg(readCtx, int(fd), mmsg)
-			readCancel()
-			if err != nil {
-				t.Logf("error reading message: %s", err.Error())
-				continue
-			}
+			// Scoped so the deferred Rearm covers the read error path too:
+			// an fd that is not re-armed is never reported again, so missing
+			// it once takes the socket out of the poller permanently.
+			func() {
+				// After processing, not after reading: re-arming earlier
+				// would let another worker take the next batch off this
+				// socket and overtake this one.
+				defer func() {
+					if err := poller.Rearm(fd); err != nil {
+						t.Logf("error rearming fd: %s", err)
+					}
+				}()
 
-			mmsgit := GetMultiMsgIterator(mmsg)
-			for i := 0; i < numMsg; i++ {
-				msg := mmsgit.Next()
-				if msg.IsNotification {
-					nnotifications++
-					t.Logf("sctp notification: %s", msg)
-					continue
+				// The fd is only known to have been readable when the poller
+				// enqueued it, so bound the read instead of spinning on EAGAIN
+				// with a background context.
+				readCtx, readCancel := context.WithTimeout(ctx, 100*time.Millisecond)
+				numMsg, err := RecvMultiMsg(readCtx, int(fd), mmsg)
+				readCancel()
+				if err != nil {
+					t.Logf("error reading message: %s", err.Error())
+					return
 				}
-				nreceived++
-				nbytes += len(msg.Bytes)
-			}
+
+				mmsgit := GetMultiMsgIterator(mmsg)
+				for i := 0; i < numMsg; i++ {
+					msg := mmsgit.Next()
+					if msg.IsNotification {
+						nnotifications++
+						t.Logf("sctp notification: %s", msg)
+						continue
+					}
+					nreceived++
+					nbytes += len(msg.Bytes)
+				}
+			}()
 		}
 	}(ctx)
 

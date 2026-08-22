@@ -49,14 +49,19 @@ type Receiver struct {
 	// passing a Go pointer through C, so a cgo.Handle rides through the
 	// action's args instead.
 	handle cgo.Handle
-	// TODO: store an array for added actions. free them on Close().
+	// actions maps an FD to the C action registered for it. The registration
+	// is EPOLLONESHOT, so the callback has to re-arm through the original
+	// pointer once it has finished with the batch.
+	mu      sync.RWMutex
+	actions map[int]*C.poller_action_t
 }
 
 func NewReceiver(timeout int) *Receiver {
 	r := &Receiver{
-		wg:     sync.WaitGroup{},
-		poller: C.poller_create(C.int(timeout)),
-		mmsg:   CreateMultiMsg(10, 9216),
+		wg:      sync.WaitGroup{},
+		poller:  C.poller_create(C.int(timeout)),
+		mmsg:    CreateMultiMsg(10, 9216),
+		actions: make(map[int]*C.poller_action_t),
 	}
 	r.handle = cgo.NewHandle(r)
 	return r
@@ -67,6 +72,14 @@ func NewReceiver(timeout int) *Receiver {
 //export receiveMultiMessage
 func receiveMultiMessage(fd C.int, args C.uintptr_t) {
 	r := cgo.Handle(args).Value().(*Receiver)
+	// EPOLLONESHOT disarmed this fd when it was reported. Deferred rather than
+	// called at the end, so the error paths below re-arm too: skipping it once
+	// takes the socket out of the poller for good.
+	defer func() {
+		if err := r.rearm(int(fd)); err != nil {
+			fmt.Printf("error rearming fd: %s\n", err)
+		}
+	}()
 	mmsg := r.mmsg
 	// TODO: can I propagate the main context up to here?
 	// The receiver itself now arrives through a cgo.Handle, so anything
@@ -103,8 +116,27 @@ func (p *Receiver) Add(fd int) error {
 	if action == nil {
 		return fmt.Errorf("error adding action to poller")
 	}
-	// TODO: action is allocated by C and needs to be freed.
-	_ = action
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.actions[fd] = action
+	return nil
+}
+
+// rearm re-enables an fd that EPOLLONESHOT disarmed when it was reported. The
+// callback runs inline on the epoll thread and does its own reading, so it is
+// the callback that owns the re-arm, at the point where it is done processing.
+func (p *Receiver) rearm(fd int) error {
+	p.mu.RLock()
+	action, ok := p.actions[fd]
+	p.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("fd %d is not registered with this receiver", fd)
+	}
+
+	if C.poller_rearm(p.poller, action) != 0 {
+		return fmt.Errorf("error rearming fd %d", fd)
+	}
 	return nil
 }
 
@@ -124,5 +156,13 @@ func (p *Receiver) Close() {
 	// Only safe after the poller thread is gone: the callback resolves this
 	// handle on every event.
 	p.handle.Delete()
+
+	p.mu.Lock()
+	for fd, action := range p.actions {
+		C.free(unsafe.Pointer(action))
+		delete(p.actions, fd)
+	}
+	p.mu.Unlock()
+
 	DestroyMultiMsg(&p.mmsg)
 }

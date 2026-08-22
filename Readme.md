@@ -1,11 +1,12 @@
 # Go wrapper for SCTP
 
-This is an experimental library which is looking to identify solutions for the following problems:
-1. Go doesn't offer any SCTP support. The user would have to use syscalls for creating SCTP sockets and setting socket options.
-2. Go doesn't offer an equivalent to `struct mmsghdr`, `recvmmsg`, `sendmmsg` for SCTP sockets.
+This is an experimental library with the following objectives:
+1. Learn CGO.
+2. Go doesn't offer any SCTP support. The user would have to use syscalls for creating SCTP sockets and setting socket options.
+3. Go doesn't offer an equivalent to `struct mmsghdr`, `recvmmsg`, `sendmmsg` for SCTP sockets.
 [ReadBatch](https://pkg.go.dev/golang.org/x/net/ipv4#PacketConn.ReadBatch) and [WriteBatch](https://pkg.go.dev/golang.org/x/net/ipv4#PacketConn.WriteBatch)
 only work on a `PacketConn`.
-3. How can I use non-blocking operations when reading/writing into multiple SCTP sockets.
+4. How can I use non-blocking operations when reading/writing into multiple SCTP sockets.
 
 
 - [georgeyanev/go-sctp](https://github.com/georgeyanev/go-sctp)
@@ -13,7 +14,7 @@ presents one example of how to hook up SCTP Socket fds to the netpoller. It open
 and then uses os.NewFile to hook to the netpoller.
 - [ishidawataru/sctp](https://github.com/ishidawataru/sctp) ignores the netpoller in favour of using syscalls. It
 opens a blocking socket, bindx, listen, then keeps the bare int fd, so every Recvmsg/Accept blocks an OS thread.
-- this repo use CGO and writes it's own epoll for monitoring fds and as well container structures for mmmsg.
+- this repo use CGO and writes it's own epoll for monitoring fds and as well container structures for mmmsg. This is for learning purposes. CGO isn't really needed, everything here can be achieved using GO Syscalls.
 
 ## Receiver and Poller
 
@@ -54,6 +55,12 @@ for _, r := range receivers {
 ```
 
 The `poller` is intended to be used as a producer for a queue. It produces FDs. The user can then start goroutines which read from these FDs when they appear in the queue.
+
+FDs are registered with `EPOLLONESHOT`, so an FD is produced at most once at a time and
+whichever worker takes it owns that socket until it calls `Rearm`. Any worker serves any
+FD; the kernel only guarantees that no two serve the same one concurrently, which is what
+keeps SCTP's per-stream ordering intact. **An FD that is never re-armed is never produced
+again**, so `Rearm` belongs in a `defer` that covers the error paths too.
 ```go
 server := NewSctpServer("0.0.0.0", 20304)
 client := NewSctpClient("127.0.0.1", 40302)
@@ -72,27 +79,34 @@ go func(ctx context.Context) {
     defer DestroyMultiMsg(&mmsg)
     // Queue() is closed by Close, so the range ends with the poller.
     for fd := range poller.Queue() {
-        // Bound the read: RecvMultiMsg retries on EAGAIN until its
-        // context expires.
-        readCtx, readCancel := context.WithTimeout(ctx, 100*time.Millisecond)
-        numMsg, err := RecvMultiMsg(readCtx, fd, mmsg)
-        readCancel()
-        if err != nil {
-            log.Printf("error reading message: %s", err)
-            continue
-        }
+        func() {
+            // Deferred so every path re-arms, including the read error
+            // below. After processing, never between read and process:
+            // re-arming early lets another worker overtake this one.
+            defer poller.Rearm(fd)
 
-        mmsgit := GetMultiMsgIterator(mmsg)
-        for i := 0; i < numMsg; i++ {
-            msg := mmsgit.Next()
-            // Notifications arrive on the same socket as user data;
-            // printing one as a string gives you the decoded event.
-            if msg.IsNotification {
-                fmt.Printf("sctp notification: %s\n", msg)
-                continue
+            // Bound the read: RecvMultiMsg retries on EAGAIN until its
+            // context expires.
+            readCtx, readCancel := context.WithTimeout(ctx, 100*time.Millisecond)
+            numMsg, err := RecvMultiMsg(readCtx, fd, mmsg)
+            readCancel()
+            if err != nil {
+                log.Printf("error reading message: %s", err)
+                return
             }
-            fmt.Printf("received %d bytes: %s\n", len(msg.Bytes), msg)
-        }
+
+            mmsgit := GetMultiMsgIterator(mmsg)
+            for i := 0; i < numMsg; i++ {
+                msg := mmsgit.Next()
+                // Notifications arrive on the same socket as user data;
+                // printing one as a string gives you the decoded event.
+                if msg.IsNotification {
+                    fmt.Printf("sctp notification: %s\n", msg)
+                    continue
+                }
+                fmt.Printf("received %d bytes: %s\n", len(msg.Bytes), msg)
+            }
+        }()
     }
 }(ctx)
 
@@ -152,24 +166,35 @@ will not let a Go pointer be stored in C memory, and a handle is an integer.
 
 Findings, in the order they matter:
 
-1. Concurrent readers on one socket work as intended. The kernel serializes on the
-socket receive queue and each message is dequeued exactly once, so N workers calling
-`recvmmsg` on the same fd get disjoint messages. `EPOLLEXCLUSIVE` is the right
-registration for this; `EPOLLONESHOT` would defeat it by permitting one reader at a
-time.
-2. Per-stream ordering is lost. SCTP guarantees ordered delivery per stream within an
-association, but two workers can take consecutive messages of the same stream and
-finish in the opposite order. Reading in parallel is fine; *processing* has to be
-re-serialized by hashing `(assoc_id, stream)` to a fixed worker.
-3. The data needed for that hash is currently discarded. Neither `mmsg_create` nor
-`RecvMsg` sets `msg_control`/`msg_controllen`, so `sctp_sndrcvinfo` never arrives
-despite `sctp_data_io_event` being subscribed — every read sets `MSG_CTRUNC` and no
-message can be attributed to an association or stream.
-4. Wakeups are wasted, not raced. Level-triggered registration re-reports the fd until
-it is drained, so a worker can wake to an already-empty socket and burn a `recvmmsg`
-on `EAGAIN`. That is the cost of the design rather than corruption, but it is what the
-tests have to bound with a timeout.
-5. Producing an fd still costs a C-to-Go transition. `enqueueFD` is Go code entering
+1. Concurrent readers on one socket lose per-stream ordering. The kernel serializes on
+the receive queue, so N workers calling `recvmmsg` on the same fd do get disjoint
+messages — but two of them can take consecutive messages of the same stream and finish
+in the opposite order. Hashing `(assoc_id, stream)` *after* the read does not fix this:
+the order in which two threads hand off to the hashed worker is itself a race. Order is
+only recoverable if the point where sequence is established is single-threaded.
+2. `EPOLLONESHOT` is what makes that single-threaded, and it is what the poller now
+registers with (`core/src/poller.c`). The fd is disarmed the moment it is reported, so
+exactly one worker holds a socket until it calls `Rearm`. This does not pin an
+association to a worker — any worker takes any fd — it only guarantees no two serve the
+same one at once. `EPOLLEXCLUSIVE` was the wrong tool here: it suppresses thundering-herd
+wakeups across multiple waiters on one fd, and there is a single dispatcher thread.
+3. Re-arm after processing, not after reading. Re-arming between the `recvmmsg` and the
+work lets the next worker read the following batch and finish ahead of the current one,
+which puts the messages back out of order — the exact failure `EPOLLONESHOT` was added
+to prevent.
+4. Dropping a wakeup is now fatal, not free. Under level-triggered registration a dropped
+fd was re-reported on the next wait; under `EPOLLONESHOT` it stays disarmed and that
+socket goes silent permanently. `enqueueFD` blocks on a full queue for this reason, and
+`Close` closes a `done` channel to release a producer stuck there. Blocking the epoll
+thread only delays the fds that are still armed; it cannot lose them.
+5. Hashing is only needed for parallelism *inside* one association. With one fd per peer
+and one worker holding it at a time, every ordering guarantee SCTP makes already holds.
+Splitting streams of a single association across workers is the case that needs the hash
+key — and the data for it is currently discarded: neither `mmsg_create` nor `RecvMsg`
+sets `msg_control`/`msg_controllen`, so `sctp_sndrcvinfo` never arrives despite
+`sctp_data_io_event` being subscribed. Every read sets `MSG_CTRUNC`. The modern
+equivalent is `SCTP_RECVRCVINFO` → `struct sctp_rcvinfo` (RFC 6458).
+6. Producing an fd still costs a C-to-Go transition. `enqueueFD` is Go code entering
 from a thread the runtime has to hand a P to, so it waits when every P is busy and
 stalls outright during a stop-the-world pause. The poller pays this once per wakeup
 rather than once per message, which is the whole of its advantage over the receiver —

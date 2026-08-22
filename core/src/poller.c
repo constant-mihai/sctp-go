@@ -25,18 +25,36 @@ poller_t *poller_create(int timeout) {
     return poller;
 }
 
-// fd is the file descriptor that we want to poller for.
-int poller_add(poller_t *poller, poller_action_t *action) {
+// EPOLLONESHOT disarms the fd the moment it is reported, so at most one worker
+// holds a given socket at a time. That is what keeps SCTP's per-stream ordering:
+// level-triggered registration would re-report the fd while a worker was still
+// draining it, and a second worker reading the same association concurrently can
+// finish its messages in the wrong order. The owner re-arms with poller_rearm
+// once it is done, so which worker serves an association still varies per event.
+static int poller_ctl(poller_t *poller, poller_action_t *action, int op) {
     struct epoll_event ev;
-    // TODO: store fds in poller->fds
-    // TODO: realloc fds if not enough room
-    ev.events = EPOLLIN|EPOLLEXCLUSIVE;
+    ev.events = EPOLLIN|EPOLLONESHOT;
     ev.data.ptr = action;
-    if (epoll_ctl(poller->epoll_fd, EPOLL_CTL_ADD, action->fd, &ev)) {
+    if (epoll_ctl(poller->epoll_fd, op, action->fd, &ev)) {
         return -1;
     }
 
     return 0;
+}
+
+// fd is the file descriptor that we want to poller for.
+int poller_add(poller_t *poller, poller_action_t *action) {
+    // TODO: store fds in poller->fds
+    // TODO: realloc fds if not enough room
+    return poller_ctl(poller, action, EPOLL_CTL_ADD);
+}
+
+// poller_rearm re-enables reporting for an fd disarmed by EPOLLONESHOT. It must
+// be called after the batch has been *processed*, not merely read: re-arming
+// between the read and the processing lets the next worker overtake the current
+// one, which is the reordering this design exists to prevent.
+int poller_rearm(poller_t *poller, poller_action_t *action) {
+    return poller_ctl(poller, action, EPOLL_CTL_MOD);
 }
 
 int poller_del(poller_t *poller, int fd) {

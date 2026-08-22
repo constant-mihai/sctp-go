@@ -19,6 +19,7 @@ package sctp
 // }
 import "C"
 import (
+	"fmt"
 	"runtime/cgo"
 	"sync"
 	"unsafe"
@@ -30,28 +31,40 @@ import (
 // When the poller receives an event, it enqueues the FD in a shared
 // queue. Worker threads started separately dequeue and read from
 // the dequeued socket FD.
+//
+// Registration is EPOLLONESHOT, so an FD appears in the queue at most once at
+// a time: whichever worker takes it owns that socket until it calls Rearm. Any
+// worker can serve any FD — the kernel only guarantees that no two serve the
+// same one concurrently, which is what preserves SCTP's per-stream ordering.
 type Poller struct {
 	wg     sync.WaitGroup
 	poller *C.struct_poller
-	// queue carries the FDs the poller produced. It is buffered, and the
-	// producer never blocks on it; see enqueueFD.
+	// queue carries the FDs the poller produced. Under EPOLLONESHOT a dropped
+	// FD is never re-reported, so the producer must not drop; see enqueueFD.
 	queue chan int
+	// done is closed by Close to release a producer blocked on a full queue.
+	done chan struct{}
 	// handle keeps the poller reachable from the C callback. cgo forbids
 	// passing a Go pointer through C, so a cgo.Handle rides through the
 	// action's args instead.
 	handle cgo.Handle
-	// TODO: store an array for added actions. free them on Close().
+	// actions maps an FD to the C action registered for it. Rearm needs the
+	// original pointer, because it is what epoll hands back in data.ptr.
+	mu      sync.RWMutex
+	actions map[int]*C.poller_action_t
 }
 
-// DefaultQueueSize is the number of FDs a poller buffers before it starts
-// dropping wakeups.
+// DefaultQueueSize is the number of FDs a poller buffers before the epoll
+// thread blocks waiting for a consumer.
 const DefaultQueueSize = 1024
 
 func NewPoller(timeout int) *Poller {
 	p := &Poller{
-		wg:     sync.WaitGroup{},
-		poller: C.poller_create(C.int(timeout)),
-		queue:  make(chan int, DefaultQueueSize),
+		wg:      sync.WaitGroup{},
+		poller:  C.poller_create(C.int(timeout)),
+		queue:   make(chan int, DefaultQueueSize),
+		done:    make(chan struct{}),
+		actions: make(map[int]*C.poller_action_t),
 	}
 	p.handle = cgo.NewHandle(p)
 	return p
@@ -68,24 +81,52 @@ func (p *Poller) Queue() <-chan int {
 //export enqueueFD
 func enqueueFD(fd C.int, args C.uintptr_t) {
 	p := cgo.Handle(args).Value().(*Poller)
-	// Non-blocking on purpose: this runs on the C epoll thread, so a
-	// blocking send would stall dispatch once the queue filled up. Dropping
-	// is safe because the registration is level-triggered — epoll reports
-	// the fd again on the next wait.
+	// Blocking on purpose. This runs on the C epoll thread, so a full queue
+	// stalls dispatch — but under EPOLLONESHOT the alternative is worse: a
+	// dropped FD stays disarmed and that socket goes silent permanently.
+	// Stalling only delays the FDs that are still armed; they are reported as
+	// soon as the loop gets back to epoll_wait. Close releases us via done.
 	select {
 	case p.queue <- int(fd):
-	default:
+	case <-p.done:
 	}
 }
 
-func (p *Poller) Add(fd int) {
+func (p *Poller) Add(fd int) error {
 	action := C.poller_add_enqueuer(
 		p.poller,
 		C.int(fd),
 		C.uintptr_t(p.handle),
 	)
-	// TODO: action is allocated by C and needs to be freed.
-	_ = action
+	if action == nil {
+		return fmt.Errorf("error adding action to poller for fd %d", fd)
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.actions[fd] = action
+	return nil
+}
+
+// Rearm re-enables an FD taken from Queue. EPOLLONESHOT disarmed it when it was
+// reported, so it is not reported again until this is called, and an FD that is
+// never re-armed is never served again.
+//
+// Call it after the batch has been processed, not right after reading it:
+// re-arming early lets another worker read the next batch from the same socket
+// and finish ahead of this one, which puts the messages back out of order.
+func (p *Poller) Rearm(fd int) error {
+	p.mu.RLock()
+	action, ok := p.actions[fd]
+	p.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("fd %d is not registered with this poller", fd)
+	}
+
+	if C.poller_rearm(p.poller, action) != 0 {
+		return fmt.Errorf("error rearming fd %d", fd)
+	}
+	return nil
 }
 
 func (p *Poller) Run() {
@@ -97,6 +138,9 @@ func (p *Poller) Run() {
 }
 
 func (p *Poller) Close() {
+	// First, so that a producer blocked on a full queue can return and let the
+	// epoll loop notice it has been stopped.
+	close(p.done)
 	// TODO: poller_stop should block until the poller actually stops
 	C.poller_stop(p.poller)
 	p.wg.Wait()
@@ -104,5 +148,13 @@ func (p *Poller) Close() {
 	// Only safe after the poller thread is gone: the callback resolves this
 	// handle on every event.
 	p.handle.Delete()
+
+	p.mu.Lock()
+	for fd, action := range p.actions {
+		C.free(unsafe.Pointer(action))
+		delete(p.actions, fd)
+	}
+	p.mu.Unlock()
+
 	close(p.queue)
 }

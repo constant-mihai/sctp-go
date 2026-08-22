@@ -205,8 +205,22 @@ func CreateMultiMsg(size, bufLen int) *C.struct_mmsg {
 	return C.CreateMmsg(C.int(10), C.int(9216))
 }
 
+// DestroyMultiMsg frees the container and nils the caller's pointer.
+//
+// The double indirection is not handed to C as given. When a Go pointer is
+// passed to C, the runtime scans the whole heap object it points into for
+// further Go pointers — so `&someStruct.mmsg` drags in every other field, and
+// panics with "cgo argument has Go pointer to unpinned Go pointer" the moment
+// that struct grows a map, slice, or channel. Copying into a local first means
+// C only ever sees a pointer to a lone C pointer, whatever the caller stores it
+// in.
 func DestroyMultiMsg(mmsg **C.struct_mmsg) {
-	C.DestroyMmsg(mmsg)
+	if mmsg == nil || *mmsg == nil {
+		return
+	}
+	local := *mmsg
+	C.DestroyMmsg(&local)
+	*mmsg = local
 }
 
 // Message is one message read from an SCTP socket. Notifications are delivered

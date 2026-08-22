@@ -33,6 +33,10 @@ typedef struct poller_action {
 
 poller_t *poller_create(int timeout);
 int poller_add(poller_t *poller, poller_action_t *action);
+// poller_rearm re-enables an fd that EPOLLONESHOT disarmed when it was reported.
+// Until it is called the fd is never reported again, so a caller that takes an
+// fd from the poller and forgets to re-arm it silences that socket for good.
+int poller_rearm(poller_t *poller, poller_action_t *action);
 int poller_del(poller_t *poller, int fd);
 void *poller_run(void *args);
 void poller_stop(poller_t *poller);
