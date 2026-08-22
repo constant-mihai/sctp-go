@@ -76,11 +76,23 @@ poller.Close()
 ```
 
 ## Install
-`TODO: I haven't tested yet a fresh build, so I cannot recommend deps installation.`
-To test the library:
+Dependencies: a C toolchain, the Go toolchain, and the lksctp headers
+(`libsctp-dev` on Debian/Ubuntu, `lksctp-tools-devel` on Fedora). The C code links
+against `-lsctp` and `-lpthread`.
+`TODO: a build on a fresh machine hasn't been verified beyond this list.`
+
+Everything is driven from the root Makefile:
 ```
-cd core/ && make shared && sudo make install && cd ../
-go test -v ./sctp
+make        # compiles core/ and links core/lib/libsctpcore.so
+make test   # builds the library if needed, then runs go test -v ./sctp
+make ctest  # runs the C test suite
+make clean
+```
+`make test` points `LD_LIBRARY_PATH` at `core/lib`, so the shared object does not
+have to be installed system-wide to run the tests. If you do want it on the
+default loader path:
+```
+sudo make install   # copies the .so to /usr/local/lib and runs ldconfig
 ```
 
 

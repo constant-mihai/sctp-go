@@ -1,7 +1,7 @@
 package sctp
 
-// #cgo CFLAGS: -g -Wall -I../core/src
-// #cgo LDFLAGS: -L${SRCDIR}/core/lib -lsctpcore
+// #cgo CFLAGS: -g -Wall -I${SRCDIR}/../core/src
+// #cgo LDFLAGS: -L${SRCDIR}/../core/lib -lsctpcore
 // #include <stdlib.h>
 // #include "adapter.h"
 // extern void receiveMultiMessage(int fd, void* args);

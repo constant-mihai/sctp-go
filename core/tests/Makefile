@@ -17,7 +17,7 @@ TEST_OBJECTS := $(TEST_SOURCE:.c=.o)
 .PHONY: tests
 tests: $(TEST_OBJECTS) $(OBJECTS)
 	@echo "Linking $^ -> $@"
-	$(VERBOSE)$(CC) $(CFLAGS) $(INCLUDES) $($LDFLAGS) $^ -o $@
+	$(VERBOSE)$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@ $(LDFLAGS)
 
 clean:
 	rm -rf *.o *.d
