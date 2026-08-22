@@ -2,11 +2,11 @@
 
 This is an experimental library with the following objectives:
 1. Learn CGO.
-2. Go doesn't offer any SCTP support. The user would have to use syscalls for creating SCTP sockets and setting socket options.
-3. Go doesn't offer an equivalent to `struct mmsghdr`, `recvmmsg`, `sendmmsg` for SCTP sockets.
+2. Offer an API that allows to create active/passive SCTP sockets. Go doesn't offer any SCTP support. The user would have to use syscalls for creating SCTP sockets and setting socket options.
+3. Read and write SCTP messages in batches. Go doesn't offer an equivalent to `struct mmsghdr`, `recvmmsg`, `sendmmsg` for SCTP sockets.
 [ReadBatch](https://pkg.go.dev/golang.org/x/net/ipv4#PacketConn.ReadBatch) and [WriteBatch](https://pkg.go.dev/golang.org/x/net/ipv4#PacketConn.WriteBatch)
 only work on a `PacketConn`.
-4. How can I use non-blocking operations when reading/writing into multiple SCTP sockets.
+4. Use epoll and distribute work to multiple workers when fds are ready to read/write. 
 
 
 - [georgeyanev/go-sctp](https://github.com/georgeyanev/go-sctp)
