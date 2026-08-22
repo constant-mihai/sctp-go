@@ -175,6 +175,24 @@ stalls outright during a stop-the-world pause. The poller pays this once per wak
 rather than once per message, which is the whole of its advantage over the receiver —
 it does not escape it.
 
+### Pinning work to cores
+
+Go offers exactly one mechanism for this — `runtime.LockOSThread` to bind a goroutine
+to a thread, then `unix.SchedSetaffinity` to bind that thread to a core. The lock is
+what makes the netpoller's wakeup land on a known thread; the affinity call is what
+stops the kernel migrating that thread and dragging the flow's state into a cold cache.
+What differs between the three libraries is not the mechanism but what there is to pin.
+
+`ishidawataru/sctp` and `go-sctp` are one-to-one: an association is a socket, so
+pinning its goroutine pins the whole flow, and per-stream ordering is preserved by
+construction rather than by hashing. `ishidawataru/sctp` goes furthest —
+its read blocks on that same thread, so discovery, read and processing all happen on
+the pinned core, at the cost of a thread per association. `go-sctp` pays one cross-core
+wakeup per event instead, because readiness is discovered by whichever thread the
+runtime happens to be polling on.
+
+For this repo pinning can happen only after a message has been read and hashed.
+
 ### Do the messages have to be copied out of C?
 
 No, and this was the most useful thing to learn. Today every message is copied twice
