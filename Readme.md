@@ -216,8 +216,6 @@ the pinned core, at the cost of a thread per association. `go-sctp` pays one cro
 wakeup per event instead, because readiness is discovered by whichever thread the
 runtime happens to be polling on.
 
-For this repo pinning can happen only after a message has been read and hashed.
-
 ### Do the messages have to be copied out of C?
 
 TODO; Disclaimer: this is llm generated and left here more as a reminder to myself on what can
