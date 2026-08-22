@@ -15,14 +15,14 @@ and then uses os.NewFile to hook to the netpoller.
 opens a blocking socket, bindx, listen, then keeps the bare int fd, so every Recvmsg/Accept blocks an OS thread.
 - this repo use CGO and writes it's own epoll for monitoring fds and as well container structures for mmmsg.
 
+## Receiver and Poller
+
+The repo experiments with two design choices:
+- Receiver: epoll thread wakes on EPOLLIN, calls a Go callback in-thread; the callback recvmmsgs into a shared container and iterates messages.
+- Poller: epoll thread wakes, pushes the fd onto a buffered channel; separate goroutines receive, recvmmsg, and process.
+
 ## Example usage
 There are two ways to use the library. Both of them can be explored in `receiver_test.go` and `poller_test.go`.
-
-The `receiver` is intended to be initialized as a pool of epoll threads. On these threads we can register FDs for monitoring.
-When there is an EPOLLIN event, the epoll thread runs the callback associated with the FD. There might be some problems with this approach like:
-- thundering herd, all epoll threads will wake up when an FD sees an event.
-- thread starvation, the fastest epoll thread will do all the work.
-- thread blockage, if the callback functions block, they will block the poller.
 ```go
 server := NewSctpServer("0.0.0.0", 10203)
 client := NewSctpClient("127.0.0.1", 30201)
@@ -57,7 +57,6 @@ The `poller` is intended to be used as a producer for a queue. It produces FDs. 
 ```go
 server := NewSctpServer("0.0.0.0", 20304)
 client := NewSctpClient("127.0.0.1", 40302)
-PollerQueue = NewQueue()
 poller := NewPoller(100 /* timeout in milliseconds */)
 
 poller.Add(server.FD())
@@ -71,18 +70,8 @@ defer cancel()
 go func(ctx context.Context) {
     mmsg := CreateMultiMsg(10, 9216)
     defer DestroyMultiMsg(&mmsg)
-    for ctx.Err() == nil {
-        // get something from the queue
-        fd, err := PollerQueue.Pop()
-        if err != nil {
-            log.Printf("error popping from the queue: %s", err)
-            continue
-        }
-        if fd < 0 { // queue is empty
-            time.Sleep(100 * time.Millisecond)
-            continue
-        }
-
+    // Queue() is closed by Close, so the range ends with the poller.
+    for fd := range poller.Queue() {
         // Bound the read: RecvMultiMsg retries on EAGAIN until its
         // context expires.
         readCtx, readCancel := context.WithTimeout(ctx, 100*time.Millisecond)
@@ -137,7 +126,70 @@ sudo make install   # copies the .so to /usr/local/lib and runs ldconfig
 ```
 
 
-## Performance
-`TODO: I haven't benchmarked it yet`
-The C part will do bulk copy of the messages, minimizing context switches between the kernel and user space.
-The bad part is that I haven't figured out a way to work on these buffers directly in Go, so I copy them over once again using C.GoBytes.
+## Learnings
+
+### Receiver Pool 
+
+The `receiver` is intended to be initialized as a pool of epoll threads. On these threads we can register FDs for monitoring.
+When there is an EPOLLIN event, the epoll thread runs the callback associated with the FD. There might be some problems with this approach like:
+- the pool of epoll threads buys nothing: with one-to-many SCTP every association
+arrives on a single fd, so there is nothing to shard across threads, and a wakeup hands
+the whole backlog to whichever thread the kernel picked.
+- thread blockage, the callback runs inline in the event loop, so anything it waits
+on — a mutex, a GC assist — delays the next `epoll_wait` on that thread.
+- every event crosses from C into Go through a cgo callback, on a thread the runtime
+has to attach; the poller mode pays this once per wakeup instead of once per fd.
+
+### Poller
+
+The `poller` produces fds and lets ordinary goroutines do the reading, which keeps Go
+work on Go threads. It publishes them on a buffered channel exposed by `Queue()`; the
+send is non-blocking, because it runs on the C epoll thread and must not stall dispatch
+when consumers fall behind, and a dropped wakeup is harmless under level-triggered
+epoll. The channel can be owned by the `Poller` rather than being a package global
+because the action carries a `runtime/cgo.Handle` to it through a `uintptr_t` — cgo
+will not let a Go pointer be stored in C memory, and a handle is an integer.
+
+Findings, in the order they matter:
+
+1. Concurrent readers on one socket work as intended. The kernel serializes on the
+socket receive queue and each message is dequeued exactly once, so N workers calling
+`recvmmsg` on the same fd get disjoint messages. `EPOLLEXCLUSIVE` is the right
+registration for this; `EPOLLONESHOT` would defeat it by permitting one reader at a
+time.
+2. Per-stream ordering is lost. SCTP guarantees ordered delivery per stream within an
+association, but two workers can take consecutive messages of the same stream and
+finish in the opposite order. Reading in parallel is fine; *processing* has to be
+re-serialized by hashing `(assoc_id, stream)` to a fixed worker.
+3. The data needed for that hash is currently discarded. Neither `mmsg_create` nor
+`RecvMsg` sets `msg_control`/`msg_controllen`, so `sctp_sndrcvinfo` never arrives
+despite `sctp_data_io_event` being subscribed — every read sets `MSG_CTRUNC` and no
+message can be attributed to an association or stream.
+4. Wakeups are wasted, not raced. Level-triggered registration re-reports the fd until
+it is drained, so a worker can wake to an already-empty socket and burn a `recvmmsg`
+on `EAGAIN`. That is the cost of the design rather than corruption, but it is what the
+tests have to bound with a timeout.
+5. Producing an fd still costs a C-to-Go transition. `enqueueFD` is Go code entering
+from a thread the runtime has to hand a P to, so it waits when every P is busy and
+stalls outright during a stop-the-world pause. The poller pays this once per wakeup
+rather than once per message, which is the whole of its advantage over the receiver —
+it does not escape it.
+
+### Do the messages have to be copied out of C?
+
+No, and this was the most useful thing to learn. Today every message is copied twice
+after the kernel writes it: once by `recvmmsg` into the buffers `mmsg_create`
+allocated, and once by `C.GoBytes` into a fresh Go slice. `GoBytes` is a `mallocgc`
+plus a `memmove`, so a batch of ten messages costs ten heap allocations — which
+cancels much of the point of batching, since `recvmmsg` was supposed to amortize one
+syscall and one cgo transition across the whole batch.
+
+Two ways out. The cheap one is to borrow rather than copy: `unsafe.Slice` over
+`iov_base` yields a Go slice aliasing the C buffer with no allocation, valid only
+until the next `recvmmsg` overwrites it — which suits a callback API that promises not
+to retain the bytes. The thorough one is to let the kernel scatter directly into Go
+memory: allocate the receive buffers as Go `[]byte`, pin them with `runtime.Pinner`,
+and store those pointers in the `iovec`s. Pinned pointers may legally be stored in C
+memory, so `recvmmsg` writes straight into the Go heap and the second copy disappears
+entirely. That also answers the original complaint that there was no way to work on
+these buffers directly in Go: there is, it just needs pinning.
