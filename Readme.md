@@ -142,6 +142,8 @@ sudo make install   # copies the .so to /usr/local/lib and runs ldconfig
 
 ## Learnings
 
+TODO: these are LLM generated. They look mostly accurate, but aren't thoroughly reviewed.
+
 ### Receiver Pool 
 
 The `receiver` is intended to be initialized as a pool of epoll threads. On these threads we can register FDs for monitoring.
